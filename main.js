@@ -27,10 +27,15 @@ __export(main_exports, {
   default: () => RedmineGanttPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
+var PLAN_STATUS_LABELS = {
+  todo: "\u672A\u7740\u624B",
+  doing: "\u9032\u884C\u4E2D",
+  done: "\u5B8C\u4E86"
+};
 var DEFAULT_SETTINGS = {
   baseUrl: "",
   apiKey: "",
@@ -38,7 +43,9 @@ var DEFAULT_SETTINGS = {
   includeClosed: false,
   defaultScale: "week",
   filters: [],
-  activeFilter: ""
+  activeFilter: "",
+  viewMode: "gantt",
+  planItems: []
 };
 var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -126,7 +133,7 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 
 // src/gantt/GanttView.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/redmine/client.ts
 var import_obsidian2 = require("obsidian");
@@ -378,6 +385,81 @@ function buildGanttModel(issues) {
   return { tasks: ordered, undated };
 }
 
+// src/plan/PlanModal.ts
+var import_obsidian3 = require("obsidian");
+var PlanModal = class extends import_obsidian3.Modal {
+  constructor(app, items, onSave) {
+    super(app);
+    this.items = items.map((item) => ({ ...item }));
+    this.onSave = onSave;
+  }
+  onOpen() {
+    this.render();
+  }
+  render() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: "\u5168\u4F53\u4E88\u5B9A\u306E\u7DE8\u96C6" });
+    contentEl.createEl("p", {
+      cls: "rg-plan-desc",
+      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u306E\u6700\u4E0A\u6BB5\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
+    });
+    this.items.forEach((item, index) => {
+      const setting = new import_obsidian3.Setting(contentEl);
+      setting.settingEl.addClass("rg-plan-setting");
+      setting.addText((text) => {
+        text.setPlaceholder("\u4E88\u5B9A\u540D").setValue(item.name).onChange((value) => {
+          item.name = value.trim();
+        });
+        text.inputEl.addClass("rg-plan-name-input");
+      }).addText((text) => {
+        text.inputEl.type = "date";
+        text.setValue(item.start).onChange((value) => {
+          item.start = value;
+        });
+      }).addText((text) => {
+        text.inputEl.type = "date";
+        text.setValue(item.end).onChange((value) => {
+          item.end = value;
+        });
+      }).addDropdown((dropdown) => {
+        for (const [value, label] of Object.entries(PLAN_STATUS_LABELS)) {
+          dropdown.addOption(value, label);
+        }
+        dropdown.setValue(item.status).onChange((value) => {
+          item.status = value;
+        });
+      }).addExtraButton(
+        (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(() => {
+          this.items.splice(index, 1);
+          this.render();
+        })
+      );
+    });
+    new import_obsidian3.Setting(contentEl).addButton(
+      (button) => button.setButtonText("\u4E88\u5B9A\u3092\u8FFD\u52A0").onClick(() => {
+        this.items.push({
+          id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+          name: "",
+          start: "",
+          end: "",
+          status: "todo"
+        });
+        this.render();
+      })
+    );
+    new import_obsidian3.Setting(contentEl).addButton(
+      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
+        this.onSave(this.items.filter((item) => item.name !== ""));
+        this.close();
+      })
+    ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
 // src/gantt/scale.ts
 var MS_PER_DAY = 24 * 60 * 60 * 1e3;
 var PX_PER_DAY = {
@@ -462,22 +544,38 @@ function svg(tag, attrs = {}) {
   }
   return el;
 }
-function renderGantt(container, model, scale, opts) {
+function renderGantt(container, model, plans, scale, opts) {
   container.empty();
-  if (model.tasks.length === 0 && model.undated.length === 0) {
+  if (model.tasks.length === 0 && model.undated.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
-  const range = computeRange(model.tasks);
+  const range = computeRange([
+    ...plans.map((p) => ({ start: p.start, due: p.end })),
+    ...model.tasks
+  ]);
   const ppd = PX_PER_DAY[scale];
   const chartWidth = (range.days + 1) * ppd;
-  const chartHeight = HEADER_HEIGHT + model.tasks.length * ROW_HEIGHT;
+  const planTop = HEADER_HEIGHT;
+  const taskTop = planTop + plans.length * ROW_HEIGHT;
+  const chartHeight = taskTop + model.tasks.length * ROW_HEIGHT;
   const body = container.createDiv({ cls: "rg-body" });
   const left = body.createDiv({ cls: "rg-left" });
   left.style.width = `${LEFT_WIDTH}px`;
   const leftHeader = left.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
+  for (const plan of plans) {
+    const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
+    row.style.height = `${ROW_HEIGHT}px`;
+    row.style.paddingLeft = "8px";
+    row.createSpan({ cls: `rg-plan-dot rg-plan-${plan.status}` });
+    row.createSpan({ cls: "rg-plan-name", text: plan.name });
+    row.createSpan({
+      cls: `rg-plan-status rg-plan-${plan.status}`,
+      text: PLAN_STATUS_LABELS[plan.status]
+    });
+  }
   for (const task of model.tasks) {
     const row = left.createDiv({ cls: "rg-left-row" });
     row.style.height = `${ROW_HEIGHT}px`;
@@ -501,6 +599,17 @@ function renderGantt(container, model, scale, opts) {
     viewBox: `0 0 ${chartWidth} ${chartHeight}`
   });
   chart.appendChild(root);
+  if (plans.length > 0) {
+    root.appendChild(
+      svg("rect", {
+        x: 0,
+        y: planTop,
+        width: chartWidth,
+        height: plans.length * ROW_HEIGHT,
+        class: "rg-plan-area"
+      })
+    );
+  }
   for (const band of weekendBands(range, scale)) {
     root.appendChild(
       svg("rect", {
@@ -518,9 +627,15 @@ function renderGantt(container, model, scale, opts) {
       svg("line", { x1: x, y1: HEADER_HEIGHT, x2: x, y2: chartHeight, class: "rg-grid" })
     );
   }
-  for (let i = 0; i <= model.tasks.length; i++) {
+  const totalRows = plans.length + model.tasks.length;
+  for (let i = 0; i <= totalRows; i++) {
     const y = HEADER_HEIGHT + i * ROW_HEIGHT;
     root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
+  }
+  if (plans.length > 0) {
+    root.appendChild(
+      svg("line", { x1: 0, y1: taskTop, x2: chartWidth, y2: taskTop, class: "rg-separator" })
+    );
   }
   for (const tick of ticks.major) {
     const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
@@ -535,12 +650,32 @@ function renderGantt(container, model, scale, opts) {
     t.textContent = tick.label;
     root.appendChild(t);
   }
+  plans.forEach((plan, i) => {
+    if (!plan.start || !plan.end)
+      return;
+    const x = diffDays(range.start, plan.start) * ppd;
+    const w = Math.max((diffDays(plan.start, plan.end) + 1) * ppd, 4);
+    const y = planTop + i * ROW_HEIGHT + BAR_PADDING;
+    const h = ROW_HEIGHT - BAR_PADDING * 2;
+    const bar = svg("rect", {
+      x,
+      y,
+      width: w,
+      height: h,
+      rx: 3,
+      class: `rg-plan-bar rg-plan-${plan.status}`
+    });
+    const title = svg("title");
+    title.textContent = planTooltip(plan);
+    bar.appendChild(title);
+    root.appendChild(bar);
+  });
   model.tasks.forEach((task, i) => {
     if (!task.start || !task.due)
       return;
     const x = diffDays(range.start, task.start) * ppd;
     const w = Math.max((diffDays(task.start, task.due) + 1) * ppd, 4);
-    const y = HEADER_HEIGHT + i * ROW_HEIGHT + BAR_PADDING;
+    const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
     const h = ROW_HEIGHT - BAR_PADDING * 2;
     const group = svg("g", { class: "rg-bar-group" });
     const barClass = "rg-bar" + (task.isClosed ? " rg-bar-closed" : "") + (task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
@@ -588,27 +723,95 @@ function renderGantt(container, model, scale, opts) {
     }
   }
 }
+function formatDate(d) {
+  if (!d)
+    return "-";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
 function taskTooltip(task) {
-  const fmt = (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : "-";
   const lines = [
     `#${task.id} ${task.subject}`,
     `${task.tracker} / ${task.status}`,
-    `\u671F\u9593: ${fmt(task.start)}${task.startIsFallback ? "(\u63A8\u5B9A)" : ""} \u301C ${fmt(task.due)}${task.dueIsFallback ? "(\u672A\u8A2D\u5B9A)" : ""}`,
+    `\u671F\u9593: ${formatDate(task.start)}${task.startIsFallback ? "(\u63A8\u5B9A)" : ""} \u301C ${formatDate(task.due)}${task.dueIsFallback ? "(\u672A\u8A2D\u5B9A)" : ""}`,
     `\u9032\u6357: ${task.doneRatio}%`
   ];
   if (task.assignee)
     lines.push(`\u62C5\u5F53: ${task.assignee}`);
   return lines.join("\n");
 }
+function planTooltip(plan) {
+  return [
+    plan.name,
+    `\u671F\u9593: ${formatDate(plan.start)} \u301C ${formatDate(plan.end)}`,
+    `\u72B6\u614B: ${PLAN_STATUS_LABELS[plan.status]}`
+  ].join("\n");
+}
+
+// src/gantt/table.ts
+var INDENT2 = 16;
+function renderTable(container, model, opts) {
+  container.empty();
+  const all = [...model.tasks, ...model.undated];
+  if (all.length === 0) {
+    container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
+    return;
+  }
+  const wrap = container.createDiv({ cls: "rg-table-wrap" });
+  const table = wrap.createEl("table", { cls: "rg-table" });
+  const thead = table.createEl("thead");
+  const headRow = thead.createEl("tr");
+  for (const label of ["#", "\u984C\u540D", "\u30B9\u30C6\u30FC\u30BF\u30B9", "\u62C5\u5F53\u8005", "\u958B\u59CB\u65E5", "\u671F\u65E5", "\u9032\u6357"]) {
+    headRow.createEl("th", { text: label });
+  }
+  const tbody = table.createEl("tbody");
+  for (const task of all) {
+    const row = tbody.createEl("tr");
+    if (task.isClosed)
+      row.addClass("rg-row-closed");
+    const idCell = row.createEl("td", { cls: "rg-td-id" });
+    idCell.createEl("a", {
+      cls: "rg-issue-link",
+      text: `#${task.id}`,
+      href: opts.issueUrl(task.id)
+    });
+    const subjectCell = row.createEl("td", { cls: "rg-td-subject" });
+    subjectCell.style.paddingLeft = `${8 + task.depth * INDENT2}px`;
+    subjectCell.createEl("a", {
+      cls: "rg-issue-link",
+      text: task.subject,
+      href: opts.issueUrl(task.id)
+    });
+    row.createEl("td", { text: task.status });
+    row.createEl("td", { text: task.assignee || "-" });
+    row.createEl("td", {
+      cls: "rg-td-date",
+      text: task.start && !task.startIsFallback ? formatDate(task.start) : "-"
+    });
+    row.createEl("td", {
+      cls: "rg-td-date",
+      text: task.due && !task.dueIsFallback ? formatDate(task.due) : "-"
+    });
+    row.createEl("td", { cls: "rg-td-ratio", text: `${task.doneRatio}%` });
+  }
+}
 
 // src/gantt/GanttView.ts
 var VIEW_TYPE_REDMINE_GANTT = "redmine-gantt-view";
-var GanttView = class extends import_obsidian3.ItemView {
+function parsePlanDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s))
+    return null;
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+var GanttView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.model = null;
     this.statusEl = null;
     this.chartEl = null;
+    this.scaleSelect = null;
     this.loading = false;
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
@@ -628,9 +831,24 @@ var GanttView = class extends import_obsidian3.ItemView {
     container.addClass("rg-view");
     const toolbar = container.createDiv({ cls: "rg-toolbar" });
     const refreshBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian3.setIcon)(refreshBtn, "refresh-cw");
+    (0, import_obsidian4.setIcon)(refreshBtn, "refresh-cw");
     refreshBtn.setAttr("aria-label", "\u518D\u53D6\u5F97");
     refreshBtn.addEventListener("click", () => void this.refresh());
+    const modeSelect = toolbar.createEl("select", { cls: "dropdown rg-mode-select" });
+    for (const [value, label] of [
+      ["gantt", "\u30AC\u30F3\u30C8"],
+      ["table", "\u30C6\u30FC\u30D6\u30EB"]
+    ]) {
+      const option = modeSelect.createEl("option", { text: label });
+      option.value = value;
+    }
+    modeSelect.value = this.plugin.settings.viewMode;
+    modeSelect.addEventListener("change", () => {
+      this.plugin.settings.viewMode = modeSelect.value;
+      void this.plugin.saveSettings();
+      this.updateScaleVisibility();
+      this.renderChart();
+    });
     const filterSelect = toolbar.createEl("select", { cls: "dropdown rg-filter-select" });
     const defaultOption = filterSelect.createEl("option", {
       text: this.plugin.settings.projectId ? `\u65E2\u5B9A (${this.plugin.settings.projectId})` : "\u65E2\u5B9A (\u5168\u30C1\u30B1\u30C3\u30C8)"
@@ -648,22 +866,33 @@ var GanttView = class extends import_obsidian3.ItemView {
       void this.plugin.saveSettings();
       void this.refresh();
     });
-    const scaleSelect = toolbar.createEl("select", { cls: "dropdown rg-scale-select" });
+    this.scaleSelect = toolbar.createEl("select", { cls: "dropdown rg-scale-select" });
     for (const [value, label] of [
       ["day", "\u65E5"],
       ["week", "\u9031"],
       ["month", "\u6708"]
     ]) {
-      const option = scaleSelect.createEl("option", { text: label });
+      const option = this.scaleSelect.createEl("option", { text: label });
       option.value = value;
     }
-    scaleSelect.value = this.scale;
-    scaleSelect.addEventListener("change", () => {
-      this.scale = scaleSelect.value;
+    this.scaleSelect.value = this.scale;
+    this.scaleSelect.addEventListener("change", () => {
+      this.scale = this.scaleSelect.value;
       this.renderChart();
+    });
+    const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
+    (0, import_obsidian4.setIcon)(planBtn, "calendar-range");
+    planBtn.setAttr("aria-label", "\u5168\u4F53\u4E88\u5B9A\u3092\u7DE8\u96C6");
+    planBtn.addEventListener("click", () => {
+      new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
+        this.plugin.settings.planItems = items;
+        void this.plugin.saveSettings();
+        this.renderChart();
+      }).open();
     });
     this.statusEl = toolbar.createDiv({ cls: "rg-status" });
     this.chartEl = container.createDiv({ cls: "rg-chart-container" });
+    this.updateScaleVisibility();
     await this.refresh();
   }
   /** 選択中の表示フィルタ。既定(設定のプロジェクト)のときは null */
@@ -673,6 +902,11 @@ var GanttView = class extends import_obsidian3.ItemView {
     if (!name)
       return null;
     return (_a = this.plugin.settings.filters.find((f) => f.name === name)) != null ? _a : null;
+  }
+  updateScaleVisibility() {
+    if (!this.scaleSelect)
+      return;
+    this.scaleSelect.style.display = this.plugin.settings.viewMode === "table" ? "none" : "";
   }
   async refresh() {
     if (this.loading || !this.chartEl)
@@ -693,18 +927,42 @@ var GanttView = class extends import_obsidian3.ItemView {
       this.setStatus("\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F");
       this.chartEl.empty();
       this.chartEl.createDiv({ cls: "rg-error", text: message });
-      new import_obsidian3.Notice(`Redmine Gantt: ${message}`);
+      new import_obsidian4.Notice(`Redmine Gantt: ${message}`);
     } finally {
       this.loading = false;
     }
+  }
+  /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
+  planRows() {
+    const rows = this.plugin.settings.planItems.map((item) => {
+      let start = parsePlanDate(item.start);
+      let end = parsePlanDate(item.end);
+      if (start && end && start > end)
+        [start, end] = [end, start];
+      if (start && !end)
+        end = start;
+      if (!start && end)
+        start = end;
+      return { name: item.name, start, end, status: item.status };
+    });
+    return rows.sort((a, b) => {
+      if (!a.start)
+        return 1;
+      if (!b.start)
+        return -1;
+      return a.start.getTime() - b.start.getTime();
+    });
   }
   renderChart() {
     if (!this.chartEl || !this.model)
       return;
     const client = new RedmineClient(this.plugin.settings);
-    renderGantt(this.chartEl, this.model, this.scale, {
-      issueUrl: (id) => client.issueUrl(id)
-    });
+    const opts = { issueUrl: (id) => client.issueUrl(id) };
+    if (this.plugin.settings.viewMode === "table") {
+      renderTable(this.chartEl, this.model, opts);
+    } else {
+      renderGantt(this.chartEl, this.model, this.planRows(), this.scale, opts);
+    }
   }
   setStatus(text) {
     var _a;
@@ -716,7 +974,7 @@ var GanttView = class extends import_obsidian3.ItemView {
 };
 
 // src/main.ts
-var RedmineGanttPlugin = class extends import_obsidian4.Plugin {
+var RedmineGanttPlugin = class extends import_obsidian5.Plugin {
   async onload() {
     await this.loadSettings();
     this.registerView(VIEW_TYPE_REDMINE_GANTT, (leaf) => new GanttView(leaf, this));

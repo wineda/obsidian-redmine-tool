@@ -1,5 +1,5 @@
 import type { GanttModel, GanttTask } from "../redmine/mapper";
-import type { GanttScale } from "../settings";
+import { GanttScale, PLAN_STATUS_LABELS, PlanStatus } from "../settings";
 import {
 	PX_PER_DAY,
 	computeRange,
@@ -27,6 +27,14 @@ function svg<K extends keyof SVGElementTagNameMap>(
 	return el;
 }
 
+/** 全体予定の表示用行(日付パース済み) */
+export interface PlanRow {
+	name: string;
+	start: Date | null;
+	end: Date | null;
+	status: PlanStatus;
+}
+
 export interface RenderOptions {
 	issueUrl: (id: number) => string;
 }
@@ -34,29 +42,47 @@ export interface RenderOptions {
 export function renderGantt(
 	container: HTMLElement,
 	model: GanttModel,
+	plans: PlanRow[],
 	scale: GanttScale,
 	opts: RenderOptions
 ): void {
 	container.empty();
 
-	if (model.tasks.length === 0 && model.undated.length === 0) {
+	if (model.tasks.length === 0 && model.undated.length === 0 && plans.length === 0) {
 		container.createDiv({ cls: "rg-empty", text: "表示できるチケットがありません。" });
 		return;
 	}
 
-	const range = computeRange(model.tasks);
+	const range = computeRange([
+		...plans.map((p) => ({ start: p.start, due: p.end })),
+		...model.tasks,
+	]);
 	const ppd = PX_PER_DAY[scale];
 	const chartWidth = (range.days + 1) * ppd;
-	const chartHeight = HEADER_HEIGHT + model.tasks.length * ROW_HEIGHT;
+	const planTop = HEADER_HEIGHT;
+	const taskTop = planTop + plans.length * ROW_HEIGHT;
+	const chartHeight = taskTop + model.tasks.length * ROW_HEIGHT;
 
 	const body = container.createDiv({ cls: "rg-body" });
 
-	// ---- 左ペイン: チケット一覧(横スクロール時も固定) ----
+	// ---- 左ペイン: 全体予定+チケット一覧(横スクロール時も固定) ----
 	const left = body.createDiv({ cls: "rg-left" });
 	left.style.width = `${LEFT_WIDTH}px`;
 	const leftHeader = left.createDiv({ cls: "rg-left-header" });
 	leftHeader.style.height = `${HEADER_HEIGHT}px`;
 	leftHeader.setText("チケット");
+
+	for (const plan of plans) {
+		const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
+		row.style.height = `${ROW_HEIGHT}px`;
+		row.style.paddingLeft = "8px";
+		row.createSpan({ cls: `rg-plan-dot rg-plan-${plan.status}` });
+		row.createSpan({ cls: "rg-plan-name", text: plan.name });
+		row.createSpan({
+			cls: `rg-plan-status rg-plan-${plan.status}`,
+			text: PLAN_STATUS_LABELS[plan.status],
+		});
+	}
 
 	for (const task of model.tasks) {
 		const row = left.createDiv({ cls: "rg-left-row" });
@@ -83,6 +109,19 @@ export function renderGantt(
 	});
 	chart.appendChild(root);
 
+	// 全体予定エリアの背景
+	if (plans.length > 0) {
+		root.appendChild(
+			svg("rect", {
+				x: 0,
+				y: planTop,
+				width: chartWidth,
+				height: plans.length * ROW_HEIGHT,
+				class: "rg-plan-area",
+			})
+		);
+	}
+
 	// 週末の背景帯(日スケールのみ)
 	for (const band of weekendBands(range, scale)) {
 		root.appendChild(
@@ -105,9 +144,16 @@ export function renderGantt(
 	}
 
 	// 行区切りの横線
-	for (let i = 0; i <= model.tasks.length; i++) {
+	const totalRows = plans.length + model.tasks.length;
+	for (let i = 0; i <= totalRows; i++) {
 		const y = HEADER_HEIGHT + i * ROW_HEIGHT;
 		root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
+	}
+	// 全体予定とチケットの区切り線
+	if (plans.length > 0) {
+		root.appendChild(
+			svg("line", { x1: 0, y1: taskTop, x2: chartWidth, y2: taskTop, class: "rg-separator" })
+		);
 	}
 
 	// ヘッダー目盛り(上段: 年月 / 下段: 日・週)
@@ -125,12 +171,33 @@ export function renderGantt(
 		root.appendChild(t);
 	}
 
+	// 全体予定のバー
+	plans.forEach((plan, i) => {
+		if (!plan.start || !plan.end) return;
+		const x = diffDays(range.start, plan.start) * ppd;
+		const w = Math.max((diffDays(plan.start, plan.end) + 1) * ppd, 4);
+		const y = planTop + i * ROW_HEIGHT + BAR_PADDING;
+		const h = ROW_HEIGHT - BAR_PADDING * 2;
+		const bar = svg("rect", {
+			x,
+			y,
+			width: w,
+			height: h,
+			rx: 3,
+			class: `rg-plan-bar rg-plan-${plan.status}`,
+		});
+		const title = svg("title");
+		title.textContent = planTooltip(plan);
+		bar.appendChild(title);
+		root.appendChild(bar);
+	});
+
 	// タスクバー
 	model.tasks.forEach((task, i) => {
 		if (!task.start || !task.due) return;
 		const x = diffDays(range.start, task.start) * ppd;
 		const w = Math.max((diffDays(task.start, task.due) + 1) * ppd, 4);
-		const y = HEADER_HEIGHT + i * ROW_HEIGHT + BAR_PADDING;
+		const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
 		const h = ROW_HEIGHT - BAR_PADDING * 2;
 
 		const group = svg("g", { class: "rg-bar-group" });
@@ -190,15 +257,28 @@ export function renderGantt(
 	}
 }
 
+export function formatDate(d: Date | null): string {
+	if (!d) return "-";
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+		d.getDate()
+	).padStart(2, "0")}`;
+}
+
 function taskTooltip(task: GanttTask): string {
-	const fmt = (d: Date | null) =>
-		d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : "-";
 	const lines = [
 		`#${task.id} ${task.subject}`,
 		`${task.tracker} / ${task.status}`,
-		`期間: ${fmt(task.start)}${task.startIsFallback ? "(推定)" : ""} 〜 ${fmt(task.due)}${task.dueIsFallback ? "(未設定)" : ""}`,
+		`期間: ${formatDate(task.start)}${task.startIsFallback ? "(推定)" : ""} 〜 ${formatDate(task.due)}${task.dueIsFallback ? "(未設定)" : ""}`,
 		`進捗: ${task.doneRatio}%`,
 	];
 	if (task.assignee) lines.push(`担当: ${task.assignee}`);
 	return lines.join("\n");
+}
+
+function planTooltip(plan: PlanRow): string {
+	return [
+		plan.name,
+		`期間: ${formatDate(plan.start)} 〜 ${formatDate(plan.end)}`,
+		`状態: ${PLAN_STATUS_LABELS[plan.status]}`,
+	].join("\n");
 }

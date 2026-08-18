@@ -17,6 +17,30 @@ export interface GanttFilter {
 	value: string;
 }
 
+export type ViewMode = "gantt" | "table";
+
+export type PlanStatus = "todo" | "doing" | "done";
+
+export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
+	todo: "未着手",
+	doing: "進行中",
+	done: "完了",
+};
+
+/**
+ * 全体予定の項目。Redmineとは独立してプラグイン内(data.json)に保存し、
+ * ガントチャートの最上段に表示する。
+ */
+export interface PlanItem {
+	id: string;
+	name: string;
+	/** "YYYY-MM-DD"。未定は空文字 */
+	start: string;
+	/** "YYYY-MM-DD"。未定は空文字 */
+	end: string;
+	status: PlanStatus;
+}
+
 export interface RedmineGanttSettings {
 	baseUrl: string;
 	apiKey: string;
@@ -26,6 +50,8 @@ export interface RedmineGanttSettings {
 	filters: GanttFilter[];
 	/** 選択中フィルタの name。空文字は既定(設定のプロジェクト) */
 	activeFilter: string;
+	viewMode: ViewMode;
+	planItems: PlanItem[];
 }
 
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
@@ -36,6 +62,8 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	defaultScale: "week",
 	filters: [],
 	activeFilter: "",
+	viewMode: "gantt",
+	planItems: [],
 };
 
 export class RedmineGanttSettingTab extends PluginSettingTab {

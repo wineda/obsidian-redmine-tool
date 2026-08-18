@@ -157,6 +157,147 @@
 	stroke-width: 1.5;
 }
 
+/* ---- 全体予定 ---- */
+.rg-plan-area {
+	fill: var(--background-secondary);
+	opacity: 0.5;
+}
+
+.rg-separator {
+	stroke: var(--background-modifier-border);
+	stroke-width: 2.5;
+}
+
+.rg-plan-row {
+	background: var(--background-secondary);
+	font-weight: 600;
+}
+
+.rg-plan-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.rg-plan-dot {
+	flex: 0 0 auto;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--text-faint);
+}
+
+.rg-plan-dot.rg-plan-doing {
+	background: var(--color-orange);
+}
+
+.rg-plan-dot.rg-plan-done {
+	background: var(--color-green);
+}
+
+.rg-plan-status {
+	flex: 0 0 auto;
+	margin-left: auto;
+	font-size: var(--font-ui-smaller);
+	font-weight: 400;
+	color: var(--text-muted);
+}
+
+.rg-plan-status.rg-plan-doing {
+	color: var(--color-orange);
+}
+
+.rg-plan-status.rg-plan-done {
+	color: var(--color-green);
+}
+
+.rg-plan-bar {
+	fill: var(--text-faint);
+	opacity: 0.75;
+}
+
+.rg-plan-bar.rg-plan-doing {
+	fill: var(--color-orange);
+}
+
+.rg-plan-bar.rg-plan-done {
+	fill: var(--color-green);
+}
+
+/* ---- 全体予定の編集モーダル ---- */
+.rg-plan-desc {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.rg-plan-setting .setting-item-info {
+	display: none;
+}
+
+.rg-plan-setting .setting-item-control {
+	justify-content: flex-start;
+	flex-wrap: wrap;
+}
+
+.rg-plan-name-input {
+	min-width: 160px;
+}
+
+/* ---- テーブル表示 ---- */
+.rg-table-wrap {
+	overflow-x: auto;
+	padding: 0 10px 10px;
+}
+
+.rg-table {
+	border-collapse: collapse;
+	width: 100%;
+	font-size: var(--font-ui-small);
+}
+
+.rg-table th,
+.rg-table td {
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding: 5px 10px;
+	text-align: left;
+	white-space: nowrap;
+}
+
+.rg-table th {
+	position: sticky;
+	top: 0;
+	background: var(--background-primary);
+	color: var(--text-muted);
+	font-weight: 600;
+	border-bottom: 2px solid var(--background-modifier-border);
+}
+
+.rg-table .rg-td-subject {
+	white-space: normal;
+	min-width: 240px;
+}
+
+.rg-table .rg-td-ratio {
+	text-align: right;
+}
+
+.rg-table .rg-issue-link {
+	color: var(--text-normal);
+	text-decoration: none;
+}
+
+.rg-table .rg-issue-link:hover {
+	color: var(--text-accent);
+}
+
+.rg-table .rg-row-closed td,
+.rg-table .rg-row-closed .rg-issue-link {
+	color: var(--text-faint);
+}
+
+.rg-table .rg-row-closed .rg-td-subject .rg-issue-link {
+	text-decoration: line-through;
+}
+
 /* ---- 日付未設定チケット ---- */
 .rg-undated {
 	border-top: 1px solid var(--background-modifier-border);

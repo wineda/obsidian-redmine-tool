@@ -1,5 +1,10 @@
 import type { GanttScale } from "../settings";
-import type { GanttTask } from "../redmine/mapper";
+
+/** 期間を持つ表示要素(チケット・全体予定共通) */
+export interface DateSpan {
+	start: Date | null;
+	due: Date | null;
+}
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -34,7 +39,7 @@ export function diffDays(from: Date, to: Date): number {
 }
 
 /** タスク群から表示範囲を求める(前後に余白日を持たせる) */
-export function computeRange(tasks: GanttTask[]): TimeRange {
+export function computeRange(tasks: DateSpan[]): TimeRange {
 	const today = startOfDay(new Date());
 	let min = today;
 	let max = today;
