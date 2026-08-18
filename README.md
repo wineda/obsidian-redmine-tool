@@ -4,6 +4,14 @@
 
 構成の詳細は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。
 
+## 画面イメージ
+
+サンプルデータでの表示例(週スケール)。テーマのライト/ダークに自動で追従します。
+
+![ガントビュー(ライトテーマ)](docs/images/screenshot-light.png)
+
+![ガントビュー(ダークテーマ)](docs/images/screenshot-dark.png)
+
 ## 機能(Phase 1 / MVP)
 
 - Redmine REST API からチケットを全件取得(ページング対応、完了チケットの表示切替可)
@@ -22,11 +30,15 @@
 1. 「管理 → 設定 → API」で **REST APIを有効にする** をオンにする
 2. 「個人設定」ページで **APIアクセスキー** を確認する
 
-## インストール(手動)
+## インストール(ビルド不要)
 
-1. `npm install && npm run build` で `main.js` を生成
-2. Vault の `.obsidian/plugins/redmine-gantt/` に `main.js` / `manifest.json` / `styles.css` を配置
+ビルド済みの `main.js` をリポジトリに含めているため、Node.js は不要です。
+
+1. このリポジトリをダウンロード(またはクローン)する
+2. Vault の `.obsidian/plugins/redmine-gantt/` フォルダを作成し、`main.js` / `manifest.json` / `styles.css` の3ファイルをコピーする
 3. Obsidian の設定 → コミュニティプラグインで「Redmine Gantt」を有効化
+
+ソースを変更した場合は `npm install && npm run build` で `main.js` を再生成してください(コミットに含めます)。
 
 ## 設定
 
