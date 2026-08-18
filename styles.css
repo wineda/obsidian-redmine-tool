@@ -1,0 +1,193 @@
+/* Redmine Gantt plugin */
+
+.rg-view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+	padding: 0;
+}
+
+/* ---- ツールバー ---- */
+.rg-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	flex: 0 0 auto;
+}
+
+.rg-toolbar-btn {
+	display: flex;
+	align-items: center;
+	padding: 4px 8px;
+}
+
+.rg-status {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+/* ---- チャート全体 ---- */
+.rg-chart-container {
+	flex: 1 1 auto;
+	overflow: auto;
+}
+
+.rg-body {
+	display: flex;
+	align-items: flex-start;
+	min-width: fit-content;
+}
+
+/* ---- 左ペイン(チケット一覧) ---- */
+.rg-left {
+	position: sticky;
+	left: 0;
+	z-index: 2;
+	flex: 0 0 auto;
+	background: var(--background-primary);
+	border-right: 1px solid var(--background-modifier-border);
+}
+
+.rg-left-header {
+	display: flex;
+	align-items: center;
+	padding: 0 8px;
+	font-weight: 600;
+	border-bottom: 1px solid var(--background-modifier-border);
+	box-sizing: border-box;
+}
+
+.rg-left-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding-right: 8px;
+	border-bottom: 1px solid var(--background-modifier-border-hover);
+	box-sizing: border-box;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.rg-left-row .rg-issue-link {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-normal);
+	text-decoration: none;
+}
+
+.rg-left-row .rg-issue-link:hover {
+	color: var(--text-accent);
+}
+
+.rg-row-closed .rg-issue-link {
+	color: var(--text-faint);
+	text-decoration: line-through;
+}
+
+.rg-assignee {
+	flex: 0 0 auto;
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* ---- SVGチャート ---- */
+.rg-chart {
+	flex: 0 0 auto;
+}
+
+.rg-grid {
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+}
+
+.rg-weekend {
+	fill: var(--background-secondary);
+}
+
+.rg-tick-major {
+	fill: var(--text-normal);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.rg-tick-minor {
+	fill: var(--text-muted);
+	font-size: 10px;
+}
+
+.rg-bar-group {
+	cursor: pointer;
+}
+
+.rg-bar {
+	fill: var(--interactive-accent);
+	opacity: 0.35;
+}
+
+.rg-bar-progress {
+	fill: var(--interactive-accent);
+	pointer-events: none;
+}
+
+.rg-bar.rg-bar-closed {
+	fill: var(--text-faint);
+}
+
+.rg-bar-progress.rg-bar-closed {
+	fill: var(--text-faint);
+}
+
+.rg-bar.rg-bar-fallback {
+	stroke: var(--text-muted);
+	stroke-width: 1;
+	stroke-dasharray: 3 2;
+}
+
+.rg-today {
+	stroke: var(--color-red);
+	stroke-width: 1.5;
+}
+
+/* ---- 日付未設定チケット ---- */
+.rg-undated {
+	border-top: 1px solid var(--background-modifier-border);
+	padding: 8px 10px;
+}
+
+.rg-undated-header {
+	font-weight: 600;
+	color: var(--text-muted);
+	margin-bottom: 4px;
+}
+
+.rg-undated-row {
+	display: flex;
+	gap: 6px;
+	padding: 2px 0;
+}
+
+.rg-undated-row .rg-issue-link {
+	color: var(--text-normal);
+	text-decoration: none;
+}
+
+.rg-undated-row .rg-issue-link:hover {
+	color: var(--text-accent);
+}
+
+/* ---- メッセージ ---- */
+.rg-empty,
+.rg-error {
+	padding: 24px;
+	color: var(--text-muted);
+	white-space: pre-wrap;
+}
+
+.rg-error {
+	color: var(--text-error);
+}

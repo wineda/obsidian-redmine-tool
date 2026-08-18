@@ -1,0 +1,9 @@
+{
+	"id": "redmine-gantt",
+	"name": "Redmine Gantt",
+	"version": "0.1.0",
+	"minAppVersion": "1.4.0",
+	"description": "Display Redmine tickets as a Gantt chart (read-only).",
+	"author": "wineda",
+	"isDesktopOnly": false
+}
