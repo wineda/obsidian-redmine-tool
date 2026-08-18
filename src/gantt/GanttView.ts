@@ -2,7 +2,7 @@ import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type RedmineGanttPlugin from "../main";
 import { RedmineClient } from "../redmine/client";
 import { buildGanttModel, GanttModel } from "../redmine/mapper";
-import type { GanttScale } from "../settings";
+import type { GanttFilter, GanttScale } from "../settings";
 import { renderGantt } from "./renderer";
 
 export const VIEW_TYPE_REDMINE_GANTT = "redmine-gantt-view";
@@ -45,6 +45,25 @@ export class GanttView extends ItemView {
 		refreshBtn.setAttr("aria-label", "再取得");
 		refreshBtn.addEventListener("click", () => void this.refresh());
 
+		const filterSelect = toolbar.createEl("select", { cls: "dropdown rg-filter-select" });
+		const defaultOption = filterSelect.createEl("option", {
+			text: this.plugin.settings.projectId
+				? `既定 (${this.plugin.settings.projectId})`
+				: "既定 (全チケット)",
+		});
+		defaultOption.value = "";
+		for (const filter of this.plugin.settings.filters) {
+			if (!filter.name) continue;
+			const option = filterSelect.createEl("option", { text: filter.name });
+			option.value = filter.name;
+		}
+		filterSelect.value = this.activeFilter() ? this.plugin.settings.activeFilter : "";
+		filterSelect.addEventListener("change", () => {
+			this.plugin.settings.activeFilter = filterSelect.value;
+			void this.plugin.saveSettings();
+			void this.refresh();
+		});
+
 		const scaleSelect = toolbar.createEl("select", { cls: "dropdown rg-scale-select" });
 		for (const [value, label] of [
 			["day", "日"],
@@ -66,13 +85,20 @@ export class GanttView extends ItemView {
 		await this.refresh();
 	}
 
+	/** 選択中の表示フィルタ。既定(設定のプロジェクト)のときは null */
+	private activeFilter(): GanttFilter | null {
+		const name = this.plugin.settings.activeFilter;
+		if (!name) return null;
+		return this.plugin.settings.filters.find((f) => f.name === name) ?? null;
+	}
+
 	async refresh(): Promise<void> {
 		if (this.loading || !this.chartEl) return;
 		this.loading = true;
 		this.setStatus("取得中…");
 		try {
 			const client = new RedmineClient(this.plugin.settings);
-			const issues = await client.fetchIssues();
+			const issues = await client.fetchIssues(this.activeFilter());
 			this.model = buildGanttModel(issues);
 			this.renderChart();
 			const now = new Date();

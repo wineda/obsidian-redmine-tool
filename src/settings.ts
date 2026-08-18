@@ -3,12 +3,29 @@ import type RedmineGanttPlugin from "./main";
 
 export type GanttScale = "day" | "week" | "month";
 
+export type FilterType = "project" | "parent" | "query";
+
+/** ガントビューのツールバーで切り替える表示条件 */
+export interface GanttFilter {
+	name: string;
+	type: FilterType;
+	/**
+	 * project: プロジェクト識別子またはID
+	 * parent: 親チケットのID(その配下ツリー全体を表示)
+	 * query: 保存クエリのID。プロジェクトスコープのクエリは「プロジェクト識別子:クエリID」
+	 */
+	value: string;
+}
+
 export interface RedmineGanttSettings {
 	baseUrl: string;
 	apiKey: string;
 	projectId: string;
 	includeClosed: boolean;
 	defaultScale: GanttScale;
+	filters: GanttFilter[];
+	/** 選択中フィルタの name。空文字は既定(設定のプロジェクト) */
+	activeFilter: string;
 }
 
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
@@ -17,6 +34,8 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	projectId: "",
 	includeClosed: false,
 	defaultScale: "week",
+	filters: [],
+	activeFilter: "",
 };
 
 export class RedmineGanttSettingTab extends PluginSettingTab {
@@ -102,5 +121,71 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		new Setting(containerEl)
+			.setName("表示フィルタ")
+			.setHeading()
+			.setDesc(
+				"ガントビューのツールバーで切り替えられる表示条件。" +
+					"「保存クエリ」の値はクエリID(Redmineのチケット一覧URLの query_id= の数値)。" +
+					"プロジェクトスコープのクエリは「プロジェクト識別子:クエリID」の形式で指定します。"
+			);
+
+		this.plugin.settings.filters.forEach((filter, index) => {
+			const setting = new Setting(containerEl);
+			setting
+				.addText((text) =>
+					text
+						.setPlaceholder("表示名")
+						.setValue(filter.name)
+						.onChange(async (value) => {
+							filter.name = value.trim();
+							await this.plugin.saveSettings();
+						})
+				)
+				.addDropdown((dropdown) =>
+					dropdown
+						.addOption("project", "プロジェクト")
+						.addOption("parent", "親チケット配下")
+						.addOption("query", "保存クエリ")
+						.setValue(filter.type)
+						.onChange(async (value) => {
+							filter.type = value as FilterType;
+							await this.plugin.saveSettings();
+						})
+				)
+				.addText((text) =>
+					text
+						.setPlaceholder("識別子 / チケットID / クエリID")
+						.setValue(filter.value)
+						.onChange(async (value) => {
+							filter.value = value.trim();
+							await this.plugin.saveSettings();
+						})
+				)
+				.addExtraButton((button) =>
+					button
+						.setIcon("trash")
+						.setTooltip("削除")
+						.onClick(async () => {
+							this.plugin.settings.filters.splice(index, 1);
+							await this.plugin.saveSettings();
+							this.display();
+						})
+				);
+		});
+
+		new Setting(containerEl).addButton((button) =>
+			button.setButtonText("フィルタを追加").onClick(async () => {
+				this.plugin.settings.filters.push({
+					name: "",
+					type: "project",
+					value: "",
+				});
+				await this.plugin.saveSettings();
+				this.display();
+			})
+		);
+
 	}
 }

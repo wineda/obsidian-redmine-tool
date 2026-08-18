@@ -1,5 +1,5 @@
 import { requestUrl } from "obsidian";
-import type { RedmineGanttSettings } from "../settings";
+import type { GanttFilter, RedmineGanttSettings } from "../settings";
 import type {
 	RedmineIssue,
 	RedmineIssuesResponse,
@@ -10,6 +10,8 @@ import type {
 const PAGE_SIZE = 100;
 // 暴走防止の上限。超えた場合は打ち切って部分結果を返す
 const MAX_ISSUES = 10000;
+// 親チケット配下の探索で、1リクエストに詰める parent_id の数
+const PARENT_CHUNK = 30;
 
 export class RedmineApiError extends Error {
 	constructor(public status: number, message: string) {
@@ -84,22 +86,20 @@ export class RedmineClient {
 		return response.json as T;
 	}
 
-	/** 設定に基づき、対象チケットをページングしながら全件取得する */
-	async fetchIssues(): Promise<RedmineIssue[]> {
+	private statusParam(): string {
+		return this.settings.includeClosed ? "*" : "open";
+	}
+
+	/** 指定条件でチケットをページングしながら全件取得する */
+	private async fetchIssuesPaged(baseParams: Record<string, string>): Promise<RedmineIssue[]> {
 		const issues: RedmineIssue[] = [];
 		let offset = 0;
 		for (;;) {
 			const params: Record<string, string> = {
+				...baseParams,
 				limit: String(PAGE_SIZE),
 				offset: String(offset),
-				status_id: this.settings.includeClosed ? "*" : "open",
-				sort: "start_date:asc,id:asc",
 			};
-			if (this.settings.projectId) {
-				params.project_id = this.settings.projectId;
-				// サブプロジェクトのチケットも含める
-				params.subproject_id = "*";
-			}
 			const res = await this.request<RedmineIssuesResponse>("GET", "/issues.json", params);
 			issues.push(...res.issues);
 			offset += res.issues.length;
@@ -108,6 +108,95 @@ export class RedmineClient {
 			}
 		}
 		return issues;
+	}
+
+	/**
+	 * 表示フィルタに応じて対象チケットを取得する。
+	 * filter が null のときは設定の既定プロジェクトを使う。
+	 */
+	async fetchIssues(filter: GanttFilter | null): Promise<RedmineIssue[]> {
+		if (!filter || filter.type === "project") {
+			return this.fetchProjectIssues(filter ? filter.value : this.settings.projectId);
+		}
+		if (filter.type === "query") {
+			return this.fetchQueryIssues(filter.value);
+		}
+		return this.fetchSubtreeIssues(filter.value);
+	}
+
+	private fetchProjectIssues(projectId: string): Promise<RedmineIssue[]> {
+		const params: Record<string, string> = {
+			status_id: this.statusParam(),
+			sort: "start_date:asc,id:asc",
+		};
+		if (projectId) {
+			params.project_id = projectId;
+			// サブプロジェクトのチケットも含める
+			params.subproject_id = "*";
+		}
+		return this.fetchIssuesPaged(params);
+	}
+
+	/**
+	 * 保存クエリでの取得。value は「クエリID」または「プロジェクト識別子:クエリID」。
+	 * 絞り込み条件(ステータス含む)はクエリ側の定義に従うため status_id は付けない。
+	 */
+	private fetchQueryIssues(value: string): Promise<RedmineIssue[]> {
+		const m = value.trim().match(/^(.+):(\d+)$/);
+		const params: Record<string, string> = m
+			? { project_id: m[1], query_id: m[2] }
+			: { query_id: value.trim() };
+		if (!/^\d+$/.test(params.query_id)) {
+			throw new RedmineApiError(
+				0,
+				`保存クエリの指定が不正です: "${value}"(クエリID、または「プロジェクト識別子:クエリID」で指定してください)`
+			);
+		}
+		return this.fetchIssuesPaged(params);
+	}
+
+	/**
+	 * 親チケット配下のツリー全体を取得する。
+	 * Redmine APIにサブツリー一括取得はないため、parent_id フィルタで1階層ずつ辿る。
+	 * 途中の親が完了済みでも配下を辿れるよう探索は全ステータスで行い、最後に絞り込む。
+	 */
+	private async fetchSubtreeIssues(value: string): Promise<RedmineIssue[]> {
+		const rootId = Number(value.trim());
+		if (!Number.isInteger(rootId) || rootId <= 0) {
+			throw new RedmineApiError(0, `親チケットIDが不正です: "${value}"(チケット番号を指定してください)`);
+		}
+		const rootRes = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${rootId}.json`);
+		const root = rootRes.issue;
+
+		const result: RedmineIssue[] = [root];
+		const seen = new Set<number>([rootId]);
+		let frontier: number[] = [rootId];
+
+		while (frontier.length > 0 && result.length < MAX_ISSUES) {
+			const next: number[] = [];
+			for (let i = 0; i < frontier.length; i += PARENT_CHUNK) {
+				const chunk = frontier.slice(i, i + PARENT_CHUNK);
+				const children = await this.fetchIssuesPaged({
+					parent_id: chunk.join("|"),
+					status_id: "*",
+					sort: "start_date:asc,id:asc",
+				});
+				for (const child of children) {
+					if (!seen.has(child.id)) {
+						seen.add(child.id);
+						result.push(child);
+						next.push(child.id);
+					}
+				}
+			}
+			frontier = next;
+		}
+
+		if (!this.settings.includeClosed) {
+			// ルートは表示の起点なので残す
+			return result.filter((issue) => issue.id === rootId || !issue.closed_on);
+		}
+		return result;
 	}
 
 	/** 接続テスト等に使うプロジェクト一覧取得 */

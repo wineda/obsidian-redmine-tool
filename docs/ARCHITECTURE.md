@@ -80,7 +80,8 @@ obsidian-redmine-tool/
 
 | エンドポイント | 用途 | 主なパラメータ |
 |---|---|---|
-| `/issues.json` | チケット取得 | `project_id`, `status_id=*`(完了含む), `query_id`(保存クエリ), `limit`/`offset`, `include=relations` |
+| `/issues.json` | チケット取得 | `project_id`, `status_id=*`(完了含む), `query_id`(保存クエリ), `parent_id`(親チケット配下の階層探索), `limit`/`offset`, `include=relations` |
+| `/issues/:id.json` | 親チケット配下フィルタのルートチケット取得 | — |
 | `/projects.json` | 設定画面のプロジェクト選択肢 | `limit`/`offset` |
 | `/projects/:id/versions.json` | マイルストーン表示 | — |
 
@@ -113,7 +114,8 @@ obsidian-redmine-tool/
 |---|---|
 | **1 (MVP)** | 設定画面 / RedmineClient(ページング)/ 専用ビュー / SVG ガント(週スケール・進捗・今日線)/ 手動更新 |
 | **2** | 日/月スケール切替、親子ツリー表示、マイルストーン、バークリックでチケットを開く、コードブロック埋め込み |
-| **3** | 自動更新、キャッシュ(オフライン表示)、担当者/ステータスのフィルタ UI、保存クエリ(`query_id`)対応、行仮想化 |
+| **2.5(実装済み)** | 表示フィルタの切り替え: プロジェクト / 親チケット配下(`parent_id` で階層探索) / 保存クエリ(`query_id`)を設定に複数登録し、ビューのツールバーで切り替え |
+| **3** | 自動更新、キャッシュ(オフライン表示)、担当者/ステータスのフィルタ UI、行仮想化 |
 | **4** | **チケット更新対応**: ガント上での期日変更(バーのドラッグ/リサイズ)・進捗率変更を `PUT /issues/:id.json` で Redmine へ反映。楽観ロック(取得時の `updated_on` 比較)と更新確認ダイアログを設ける |
 
 ## 8. 技術スタック

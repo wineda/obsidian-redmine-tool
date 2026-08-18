@@ -36,7 +36,9 @@ var DEFAULT_SETTINGS = {
   apiKey: "",
   projectId: "",
   includeClosed: false,
-  defaultScale: "week"
+  defaultScale: "week",
+  filters: [],
+  activeFilter: ""
 };
 var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -81,6 +83,45 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian.Setting(containerEl).setName("\u8868\u793A\u30D5\u30A3\u30EB\u30BF").setHeading().setDesc(
+      "\u30AC\u30F3\u30C8\u30D3\u30E5\u30FC\u306E\u30C4\u30FC\u30EB\u30D0\u30FC\u3067\u5207\u308A\u66FF\u3048\u3089\u308C\u308B\u8868\u793A\u6761\u4EF6\u3002\u300C\u4FDD\u5B58\u30AF\u30A8\u30EA\u300D\u306E\u5024\u306F\u30AF\u30A8\u30EAID(Redmine\u306E\u30C1\u30B1\u30C3\u30C8\u4E00\u89A7URL\u306E query_id= \u306E\u6570\u5024)\u3002\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u30B9\u30B3\u30FC\u30D7\u306E\u30AF\u30A8\u30EA\u306F\u300C\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50:\u30AF\u30A8\u30EAID\u300D\u306E\u5F62\u5F0F\u3067\u6307\u5B9A\u3057\u307E\u3059\u3002"
+    );
+    this.plugin.settings.filters.forEach((filter, index) => {
+      const setting = new import_obsidian.Setting(containerEl);
+      setting.addText(
+        (text) => text.setPlaceholder("\u8868\u793A\u540D").setValue(filter.name).onChange(async (value) => {
+          filter.name = value.trim();
+          await this.plugin.saveSettings();
+        })
+      ).addDropdown(
+        (dropdown) => dropdown.addOption("project", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8").addOption("parent", "\u89AA\u30C1\u30B1\u30C3\u30C8\u914D\u4E0B").addOption("query", "\u4FDD\u5B58\u30AF\u30A8\u30EA").setValue(filter.type).onChange(async (value) => {
+          filter.type = value;
+          await this.plugin.saveSettings();
+        })
+      ).addText(
+        (text) => text.setPlaceholder("\u8B58\u5225\u5B50 / \u30C1\u30B1\u30C3\u30C8ID / \u30AF\u30A8\u30EAID").setValue(filter.value).onChange(async (value) => {
+          filter.value = value.trim();
+          await this.plugin.saveSettings();
+        })
+      ).addExtraButton(
+        (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(async () => {
+          this.plugin.settings.filters.splice(index, 1);
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+    });
+    new import_obsidian.Setting(containerEl).addButton(
+      (button) => button.setButtonText("\u30D5\u30A3\u30EB\u30BF\u3092\u8FFD\u52A0").onClick(async () => {
+        this.plugin.settings.filters.push({
+          name: "",
+          type: "project",
+          value: ""
+        });
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
   }
 };
 
@@ -91,6 +132,7 @@ var import_obsidian3 = require("obsidian");
 var import_obsidian2 = require("obsidian");
 var PAGE_SIZE = 100;
 var MAX_ISSUES = 1e4;
+var PARENT_CHUNK = 30;
 var RedmineApiError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -151,21 +193,19 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
     }
     return response.json;
   }
-  /** 設定に基づき、対象チケットをページングしながら全件取得する */
-  async fetchIssues() {
+  statusParam() {
+    return this.settings.includeClosed ? "*" : "open";
+  }
+  /** 指定条件でチケットをページングしながら全件取得する */
+  async fetchIssuesPaged(baseParams) {
     const issues = [];
     let offset = 0;
     for (; ; ) {
       const params = {
+        ...baseParams,
         limit: String(PAGE_SIZE),
-        offset: String(offset),
-        status_id: this.settings.includeClosed ? "*" : "open",
-        sort: "start_date:asc,id:asc"
+        offset: String(offset)
       };
-      if (this.settings.projectId) {
-        params.project_id = this.settings.projectId;
-        params.subproject_id = "*";
-      }
       const res = await this.request("GET", "/issues.json", params);
       issues.push(...res.issues);
       offset += res.issues.length;
@@ -174,6 +214,84 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
       }
     }
     return issues;
+  }
+  /**
+   * 表示フィルタに応じて対象チケットを取得する。
+   * filter が null のときは設定の既定プロジェクトを使う。
+   */
+  async fetchIssues(filter) {
+    if (!filter || filter.type === "project") {
+      return this.fetchProjectIssues(filter ? filter.value : this.settings.projectId);
+    }
+    if (filter.type === "query") {
+      return this.fetchQueryIssues(filter.value);
+    }
+    return this.fetchSubtreeIssues(filter.value);
+  }
+  fetchProjectIssues(projectId) {
+    const params = {
+      status_id: this.statusParam(),
+      sort: "start_date:asc,id:asc"
+    };
+    if (projectId) {
+      params.project_id = projectId;
+      params.subproject_id = "*";
+    }
+    return this.fetchIssuesPaged(params);
+  }
+  /**
+   * 保存クエリでの取得。value は「クエリID」または「プロジェクト識別子:クエリID」。
+   * 絞り込み条件(ステータス含む)はクエリ側の定義に従うため status_id は付けない。
+   */
+  fetchQueryIssues(value) {
+    const m = value.trim().match(/^(.+):(\d+)$/);
+    const params = m ? { project_id: m[1], query_id: m[2] } : { query_id: value.trim() };
+    if (!/^\d+$/.test(params.query_id)) {
+      throw new RedmineApiError(
+        0,
+        `\u4FDD\u5B58\u30AF\u30A8\u30EA\u306E\u6307\u5B9A\u304C\u4E0D\u6B63\u3067\u3059: "${value}"(\u30AF\u30A8\u30EAID\u3001\u307E\u305F\u306F\u300C\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50:\u30AF\u30A8\u30EAID\u300D\u3067\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044)`
+      );
+    }
+    return this.fetchIssuesPaged(params);
+  }
+  /**
+   * 親チケット配下のツリー全体を取得する。
+   * Redmine APIにサブツリー一括取得はないため、parent_id フィルタで1階層ずつ辿る。
+   * 途中の親が完了済みでも配下を辿れるよう探索は全ステータスで行い、最後に絞り込む。
+   */
+  async fetchSubtreeIssues(value) {
+    const rootId = Number(value.trim());
+    if (!Number.isInteger(rootId) || rootId <= 0) {
+      throw new RedmineApiError(0, `\u89AA\u30C1\u30B1\u30C3\u30C8ID\u304C\u4E0D\u6B63\u3067\u3059: "${value}"(\u30C1\u30B1\u30C3\u30C8\u756A\u53F7\u3092\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044)`);
+    }
+    const rootRes = await this.request("GET", `/issues/${rootId}.json`);
+    const root = rootRes.issue;
+    const result = [root];
+    const seen = /* @__PURE__ */ new Set([rootId]);
+    let frontier = [rootId];
+    while (frontier.length > 0 && result.length < MAX_ISSUES) {
+      const next = [];
+      for (let i = 0; i < frontier.length; i += PARENT_CHUNK) {
+        const chunk = frontier.slice(i, i + PARENT_CHUNK);
+        const children = await this.fetchIssuesPaged({
+          parent_id: chunk.join("|"),
+          status_id: "*",
+          sort: "start_date:asc,id:asc"
+        });
+        for (const child of children) {
+          if (!seen.has(child.id)) {
+            seen.add(child.id);
+            result.push(child);
+            next.push(child.id);
+          }
+        }
+      }
+      frontier = next;
+    }
+    if (!this.settings.includeClosed) {
+      return result.filter((issue) => issue.id === rootId || !issue.closed_on);
+    }
+    return result;
   }
   /** 接続テスト等に使うプロジェクト一覧取得 */
   async fetchProjects() {
@@ -513,6 +631,23 @@ var GanttView = class extends import_obsidian3.ItemView {
     (0, import_obsidian3.setIcon)(refreshBtn, "refresh-cw");
     refreshBtn.setAttr("aria-label", "\u518D\u53D6\u5F97");
     refreshBtn.addEventListener("click", () => void this.refresh());
+    const filterSelect = toolbar.createEl("select", { cls: "dropdown rg-filter-select" });
+    const defaultOption = filterSelect.createEl("option", {
+      text: this.plugin.settings.projectId ? `\u65E2\u5B9A (${this.plugin.settings.projectId})` : "\u65E2\u5B9A (\u5168\u30C1\u30B1\u30C3\u30C8)"
+    });
+    defaultOption.value = "";
+    for (const filter of this.plugin.settings.filters) {
+      if (!filter.name)
+        continue;
+      const option = filterSelect.createEl("option", { text: filter.name });
+      option.value = filter.name;
+    }
+    filterSelect.value = this.activeFilter() ? this.plugin.settings.activeFilter : "";
+    filterSelect.addEventListener("change", () => {
+      this.plugin.settings.activeFilter = filterSelect.value;
+      void this.plugin.saveSettings();
+      void this.refresh();
+    });
     const scaleSelect = toolbar.createEl("select", { cls: "dropdown rg-scale-select" });
     for (const [value, label] of [
       ["day", "\u65E5"],
@@ -531,6 +666,14 @@ var GanttView = class extends import_obsidian3.ItemView {
     this.chartEl = container.createDiv({ cls: "rg-chart-container" });
     await this.refresh();
   }
+  /** 選択中の表示フィルタ。既定(設定のプロジェクト)のときは null */
+  activeFilter() {
+    var _a;
+    const name = this.plugin.settings.activeFilter;
+    if (!name)
+      return null;
+    return (_a = this.plugin.settings.filters.find((f) => f.name === name)) != null ? _a : null;
+  }
   async refresh() {
     if (this.loading || !this.chartEl)
       return;
@@ -538,7 +681,7 @@ var GanttView = class extends import_obsidian3.ItemView {
     this.setStatus("\u53D6\u5F97\u4E2D\u2026");
     try {
       const client = new RedmineClient(this.plugin.settings);
-      const issues = await client.fetchIssues();
+      const issues = await client.fetchIssues(this.activeFilter());
       this.model = buildGanttModel(issues);
       this.renderChart();
       const now = /* @__PURE__ */ new Date();
