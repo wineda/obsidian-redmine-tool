@@ -544,6 +544,35 @@ body.rg-resizing {
 	color: #ffffff;
 }
 
+/* 編集ボタン */
+.rg-td-edit {
+	text-align: center;
+}
+
+.rg-edit-btn {
+	display: inline-flex;
+	align-items: center;
+	padding: 3px 6px;
+	background: transparent;
+	border: none;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	border-radius: 5px;
+}
+
+.rg-edit-btn:hover {
+	color: var(--text-accent);
+	background: var(--background-modifier-hover);
+}
+
+/* 編集モーダル */
+.rg-edit-meta {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-bottom: 12px;
+}
+
 /* 進捗バー */
 .rg-ratio-wrap {
 	display: flex;

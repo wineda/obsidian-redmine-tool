@@ -1,3 +1,4 @@
+import { setIcon } from "obsidian";
 import type { GanttModel, GanttTask } from "../redmine/mapper";
 import { formatDate, RenderOptions } from "./renderer";
 
@@ -14,6 +15,7 @@ const COLUMNS: { label: string; width: number; cls?: string }[] = [
 	{ label: "期日", width: 96, cls: "rg-td-date" },
 	{ label: "納期", width: 96, cls: "rg-td-date" },
 	{ label: "進捗", width: 96 },
+	{ label: "", width: 44 },
 ];
 
 export function defaultTableWidths(): number[] {
@@ -23,6 +25,8 @@ export function defaultTableWidths(): number[] {
 export interface TableOptions extends RenderOptions {
 	/** 列幅(px)。参照を保持したまま書き換えることで呼び出し側に永続される */
 	widths: number[];
+	/** 編集ボタン押下時に呼ばれる。未指定なら編集列を出さない */
+	onEdit?: (issueId: number) => void;
 }
 
 /** チケット一覧のテーブル表示。日付未設定のチケットも同じ表に含める */
@@ -144,4 +148,13 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 	fill.style.width = `${Math.min(task.doneRatio, 100)}%`;
 	if (task.doneRatio >= 100) fill.addClass("rg-progress-done");
 	ratioWrap.createSpan({ cls: "rg-progress-text", text: `${task.doneRatio}%` });
+
+	// 編集
+	const editCell = row.createEl("td", { cls: "rg-td-edit" });
+	if (opts.onEdit) {
+		const btn = editCell.createEl("button", { cls: "rg-edit-btn" });
+		setIcon(btn, "pencil");
+		btn.setAttr("aria-label", `#${task.id} を編集`);
+		btn.addEventListener("click", () => opts.onEdit!(task.id));
+	}
 }

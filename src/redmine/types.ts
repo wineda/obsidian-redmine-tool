@@ -51,6 +51,41 @@ export interface RedmineProjectsResponse {
 	limit: number;
 }
 
+export interface RedmineIssueStatus {
+	id: number;
+	name: string;
+	is_closed: boolean;
+}
+
+export interface RedmineIssueStatusesResponse {
+	issue_statuses: RedmineIssueStatus[];
+}
+
+export interface RedmineMembership {
+	id: number;
+	user?: RedmineNamedRef;
+	group?: RedmineNamedRef;
+}
+
+export interface RedmineMembershipsResponse {
+	memberships: RedmineMembership[];
+	total_count: number;
+	offset: number;
+	limit: number;
+}
+
+/** PUT /issues/:id.json の更新ペイロード(変更するフィールドのみ設定) */
+export interface RedmineIssueUpdate {
+	status_id?: number;
+	/** 空文字で未割当にする */
+	assigned_to_id?: number | "";
+	/** 空文字で日付をクリアする */
+	start_date?: string;
+	due_date?: string;
+	done_ratio?: number;
+	custom_fields?: { id: number; value: string }[];
+}
+
 export interface RedmineQuery {
 	id: number;
 	name: string;

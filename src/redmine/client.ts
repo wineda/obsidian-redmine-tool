@@ -3,6 +3,11 @@ import type { GanttFilter, RedmineGanttSettings } from "../settings";
 import type {
 	RedmineIssue,
 	RedmineIssuesResponse,
+	RedmineIssueStatus,
+	RedmineIssueStatusesResponse,
+	RedmineIssueUpdate,
+	RedmineMembershipsResponse,
+	RedmineNamedRef,
 	RedmineProject,
 	RedmineProjectsResponse,
 	RedmineQueriesResponse,
@@ -21,8 +26,7 @@ export class RedmineApiError extends Error {
 
 /**
  * Redmine REST API クライアント。
- * 現フェーズは読み取り専用のため公開メソッドは GET 系のみ。
- * 将来のチケット更新対応(Phase 4)では request() の上に PUT を追加する。
+ * 取得(GET)に加え、チケットのフィールド更新(PUT /issues/:id.json)に対応する。
  */
 export class RedmineClient {
 	constructor(private settings: RedmineGanttSettings) {}
@@ -36,9 +40,10 @@ export class RedmineClient {
 	}
 
 	private async request<T>(
-		method: "GET",
+		method: "GET" | "PUT",
 		path: string,
-		params?: Record<string, string>
+		params?: Record<string, string>,
+		body?: unknown
 	): Promise<T> {
 		if (!this.baseUrl) {
 			throw new RedmineApiError(0, "Redmine URLが設定されていません。プラグイン設定を確認してください。");
@@ -49,15 +54,21 @@ export class RedmineClient {
 		const qs = params ? new URLSearchParams(params).toString() : "";
 		const url = `${this.baseUrl}${path}${qs ? "?" + qs : ""}`;
 
+		const headers: Record<string, string> = {
+			"X-Redmine-API-Key": this.settings.apiKey,
+			Accept: "application/json",
+		};
+		if (body !== undefined) {
+			headers["Content-Type"] = "application/json";
+		}
+
 		let response;
 		try {
 			response = await requestUrl({
 				url,
 				method,
-				headers: {
-					"X-Redmine-API-Key": this.settings.apiKey,
-					Accept: "application/json",
-				},
+				headers,
+				body: body !== undefined ? JSON.stringify(body) : undefined,
 				throw: false,
 			});
 		} catch (e) {
@@ -74,14 +85,30 @@ export class RedmineClient {
 		if (response.status === 403) {
 			throw new RedmineApiError(
 				403,
-				"アクセスが拒否されました。REST APIが有効か(管理→設定→API)、プロジェクトの閲覧権限があるか確認してください。"
+				method === "PUT"
+					? "更新が拒否されました。APIキーのユーザーにチケットの編集権限があるか確認してください。"
+					: "アクセスが拒否されました。REST APIが有効か(管理→設定→API)、プロジェクトの閲覧権限があるか確認してください。"
 			);
 		}
 		if (response.status === 404) {
 			throw new RedmineApiError(404, `見つかりません (HTTP 404): ${path}`);
 		}
+		if (response.status === 422) {
+			let details = "";
+			try {
+				const data = response.json as { errors?: string[] };
+				details = (data.errors ?? []).join("\n");
+			} catch {
+				// エラー詳細が取れない場合は既定メッセージ
+			}
+			throw new RedmineApiError(422, `Redmineが更新を受け付けませんでした:\n${details || "入力内容を確認してください。"}`);
+		}
 		if (response.status >= 400) {
 			throw new RedmineApiError(response.status, `Redmine APIエラー (HTTP ${response.status}): ${path}`);
+		}
+		// 204 No Content(PUT成功時)などボディなしのレスポンス
+		if (response.status === 204 || !response.text || response.text.length === 0) {
+			return undefined as T;
 		}
 		return response.json as T;
 	}
@@ -267,6 +294,47 @@ export class RedmineClient {
 			frontier = next;
 		}
 		return result;
+	}
+
+	/** チケットを1件取得する(編集モーダルで最新状態を表示するために使う) */
+	async fetchIssue(issueId: number): Promise<RedmineIssue> {
+		const res = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${issueId}.json`);
+		return res.issue;
+	}
+
+	/** 全ステータスの一覧。ワークフロー上の遷移可否は含まれない(不可な遷移は更新時に422で返る) */
+	async fetchStatuses(): Promise<RedmineIssueStatus[]> {
+		const res = await this.request<RedmineIssueStatusesResponse>("GET", "/issue_statuses.json");
+		return res.issue_statuses;
+	}
+
+	/** プロジェクトのメンバー(担当者候補)。権限等で取得できない場合は呼び出し側でフォールバックする */
+	async fetchProjectMembers(projectId: number): Promise<RedmineNamedRef[]> {
+		const members: RedmineNamedRef[] = [];
+		const seen = new Set<number>();
+		let offset = 0;
+		for (;;) {
+			const res = await this.request<RedmineMembershipsResponse>(
+				"GET",
+				`/projects/${projectId}/memberships.json`,
+				{ limit: String(PAGE_SIZE), offset: String(offset) }
+			);
+			for (const membership of res.memberships) {
+				const ref = membership.user ?? membership.group;
+				if (ref && !seen.has(ref.id)) {
+					seen.add(ref.id);
+					members.push(ref);
+				}
+			}
+			offset += res.memberships.length;
+			if (res.memberships.length === 0 || offset >= res.total_count) break;
+		}
+		return members;
+	}
+
+	/** チケットのフィールドを更新する(変更するフィールドのみ渡す) */
+	async updateIssue(issueId: number, payload: RedmineIssueUpdate): Promise<void> {
+		await this.request<void>("PUT", `/issues/${issueId}.json`, undefined, { issue: payload });
 	}
 
 	/** 接続テスト等に使うプロジェクト一覧取得 */

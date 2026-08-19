@@ -4,6 +4,7 @@ import { RedmineClient } from "../redmine/client";
 import { buildGanttModel, GanttModel } from "../redmine/mapper";
 import type { RedmineIssue } from "../redmine/types";
 import type { GanttFilter, GanttScale, PlanItem, ViewMode } from "../settings";
+import { IssueEditModal } from "../issue/IssueEditModal";
 import { PlanModal } from "../plan/PlanModal";
 import { DEFAULT_LEFT_WIDTH, PlanRow, renderGantt } from "./renderer";
 import { TimeRange, monthRange } from "./scale";
@@ -425,12 +426,30 @@ export class GanttView extends ItemView {
 			},
 		};
 		if (this.plugin.settings.viewMode === "table") {
-			renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
+			renderTable(this.chartEl, model, {
+				...opts,
+				widths: this.tableWidths,
+				onEdit: (issueId: number) => this.openEditModal(issueId),
+			});
 		} else {
 			renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
 		}
 		const suffix = this.lastFetchedAt ? ` / 最終更新 ${this.lastFetchedAt}` : "";
 		this.setStatus(`表示 ${visible.length} / 取得 ${this.rawIssues.length}件${suffix}`);
+	}
+
+	/** チケット編集モーダルを開き、保存後は該当チケットだけ差し替えて再描画する */
+	private openEditModal(issueId: number): void {
+		const client = new RedmineClient(this.plugin.settings);
+		new IssueEditModal(this.app, client, issueId, (updated) => {
+			if (this.rawIssues) {
+				const index = this.rawIssues.findIndex((issue) => issue.id === updated.id);
+				if (index >= 0) {
+					this.rawIssues[index] = updated;
+				}
+			}
+			this.renderView();
+		}).open();
 	}
 
 	private setStatus(text: string): void {

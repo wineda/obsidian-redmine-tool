@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => RedmineGanttPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -117,7 +117,7 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 
 // src/gantt/GanttView.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/redmine/client.ts
 var import_obsidian2 = require("obsidian");
@@ -139,7 +139,8 @@ var RedmineClient = class {
   issueUrl(issueId) {
     return `${this.baseUrl}/issues/${issueId}`;
   }
-  async request(method, path, params) {
+  async request(method, path, params, body) {
+    var _a;
     if (!this.baseUrl) {
       throw new RedmineApiError(0, "Redmine URL\u304C\u8A2D\u5B9A\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002\u30D7\u30E9\u30B0\u30A4\u30F3\u8A2D\u5B9A\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
     }
@@ -148,15 +149,20 @@ var RedmineClient = class {
     }
     const qs = params ? new URLSearchParams(params).toString() : "";
     const url = `${this.baseUrl}${path}${qs ? "?" + qs : ""}`;
+    const headers = {
+      "X-Redmine-API-Key": this.settings.apiKey,
+      Accept: "application/json"
+    };
+    if (body !== void 0) {
+      headers["Content-Type"] = "application/json";
+    }
     let response;
     try {
       response = await (0, import_obsidian2.requestUrl)({
         url,
         method,
-        headers: {
-          "X-Redmine-API-Key": this.settings.apiKey,
-          Accept: "application/json"
-        },
+        headers,
+        body: body !== void 0 ? JSON.stringify(body) : void 0,
         throw: false
       });
     } catch (e) {
@@ -172,14 +178,27 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
     if (response.status === 403) {
       throw new RedmineApiError(
         403,
-        "\u30A2\u30AF\u30BB\u30B9\u304C\u62D2\u5426\u3055\u308C\u307E\u3057\u305F\u3002REST API\u304C\u6709\u52B9\u304B(\u7BA1\u7406\u2192\u8A2D\u5B9A\u2192API)\u3001\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u306E\u95B2\u89A7\u6A29\u9650\u304C\u3042\u308B\u304B\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+        method === "PUT" ? "\u66F4\u65B0\u304C\u62D2\u5426\u3055\u308C\u307E\u3057\u305F\u3002API\u30AD\u30FC\u306E\u30E6\u30FC\u30B6\u30FC\u306B\u30C1\u30B1\u30C3\u30C8\u306E\u7DE8\u96C6\u6A29\u9650\u304C\u3042\u308B\u304B\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002" : "\u30A2\u30AF\u30BB\u30B9\u304C\u62D2\u5426\u3055\u308C\u307E\u3057\u305F\u3002REST API\u304C\u6709\u52B9\u304B(\u7BA1\u7406\u2192\u8A2D\u5B9A\u2192API)\u3001\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u306E\u95B2\u89A7\u6A29\u9650\u304C\u3042\u308B\u304B\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
       );
     }
     if (response.status === 404) {
       throw new RedmineApiError(404, `\u898B\u3064\u304B\u308A\u307E\u305B\u3093 (HTTP 404): ${path}`);
     }
+    if (response.status === 422) {
+      let details = "";
+      try {
+        const data = response.json;
+        details = ((_a = data.errors) != null ? _a : []).join("\n");
+      } catch (e) {
+      }
+      throw new RedmineApiError(422, `Redmine\u304C\u66F4\u65B0\u3092\u53D7\u3051\u4ED8\u3051\u307E\u305B\u3093\u3067\u3057\u305F:
+${details || "\u5165\u529B\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002"}`);
+    }
     if (response.status >= 400) {
       throw new RedmineApiError(response.status, `Redmine API\u30A8\u30E9\u30FC (HTTP ${response.status}): ${path}`);
+    }
+    if (response.status === 204 || !response.text || response.text.length === 0) {
+      return void 0;
     }
     return response.json;
   }
@@ -355,6 +374,45 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
     }
     return result;
   }
+  /** チケットを1件取得する(編集モーダルで最新状態を表示するために使う) */
+  async fetchIssue(issueId) {
+    const res = await this.request("GET", `/issues/${issueId}.json`);
+    return res.issue;
+  }
+  /** 全ステータスの一覧。ワークフロー上の遷移可否は含まれない(不可な遷移は更新時に422で返る) */
+  async fetchStatuses() {
+    const res = await this.request("GET", "/issue_statuses.json");
+    return res.issue_statuses;
+  }
+  /** プロジェクトのメンバー(担当者候補)。権限等で取得できない場合は呼び出し側でフォールバックする */
+  async fetchProjectMembers(projectId) {
+    var _a;
+    const members = [];
+    const seen = /* @__PURE__ */ new Set();
+    let offset = 0;
+    for (; ; ) {
+      const res = await this.request(
+        "GET",
+        `/projects/${projectId}/memberships.json`,
+        { limit: String(PAGE_SIZE), offset: String(offset) }
+      );
+      for (const membership of res.memberships) {
+        const ref = (_a = membership.user) != null ? _a : membership.group;
+        if (ref && !seen.has(ref.id)) {
+          seen.add(ref.id);
+          members.push(ref);
+        }
+      }
+      offset += res.memberships.length;
+      if (res.memberships.length === 0 || offset >= res.total_count)
+        break;
+    }
+    return members;
+  }
+  /** チケットのフィールドを更新する(変更するフィールドのみ渡す) */
+  async updateIssue(issueId, payload) {
+    await this.request("PUT", `/issues/${issueId}.json`, void 0, { issue: payload });
+  }
   /** 接続テスト等に使うプロジェクト一覧取得 */
   async fetchProjects() {
     const res = await this.request("GET", "/projects.json", {
@@ -443,9 +501,183 @@ function buildGanttModel(issues) {
   return { tasks: ordered, undated };
 }
 
-// src/plan/PlanModal.ts
+// src/issue/IssueEditModal.ts
 var import_obsidian3 = require("obsidian");
-var PlanModal = class extends import_obsidian3.Modal {
+var IssueEditModal = class extends import_obsidian3.Modal {
+  constructor(app, client, issueId, onSaved) {
+    super(app);
+    this.issue = null;
+    this.statuses = [];
+    this.members = [];
+    this.saving = false;
+    // フォームの入力値
+    this.statusId = 0;
+    this.assigneeId = "";
+    // user id の文字列。空は未割当
+    this.startDate = "";
+    this.dueDate = "";
+    this.delivery = "";
+    this.doneRatio = 0;
+    this.deliveryFieldId = null;
+    this.client = client;
+    this.issueId = issueId;
+    this.onSaved = onSaved;
+  }
+  async onOpen() {
+    var _a, _b, _c, _d, _e;
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: `#${this.issueId} \u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026` });
+    try {
+      const [issue, statuses] = await Promise.all([
+        this.client.fetchIssue(this.issueId),
+        this.client.fetchStatuses()
+      ]);
+      this.issue = issue;
+      this.statuses = statuses;
+      try {
+        this.members = await this.client.fetchProjectMembers(issue.project.id);
+      } catch (e) {
+        this.members = [];
+      }
+      if (issue.assigned_to && !this.members.some((m) => m.id === issue.assigned_to.id)) {
+        this.members.unshift(issue.assigned_to);
+      }
+      this.statusId = issue.status.id;
+      this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
+      this.startDate = (_a = issue.start_date) != null ? _a : "";
+      this.dueDate = (_b = issue.due_date) != null ? _b : "";
+      this.doneRatio = (_c = issue.done_ratio) != null ? _c : 0;
+      const deliveryField = (_d = issue.custom_fields) == null ? void 0 : _d.find((f) => f.name === DELIVERY_FIELD_NAME);
+      if (deliveryField) {
+        this.deliveryFieldId = deliveryField.id;
+        this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_e = deliveryField.value) != null ? _e : "";
+      }
+      this.renderForm();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      contentEl.empty();
+      contentEl.createEl("h3", { text: `#${this.issueId} \u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557` });
+      contentEl.createDiv({ cls: "rg-error", text: message });
+    }
+  }
+  renderForm() {
+    const issue = this.issue;
+    if (!issue)
+      return;
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: `#${issue.id} ${issue.subject}` });
+    contentEl.createDiv({
+      cls: "rg-edit-meta",
+      text: `${issue.project.name} / ${issue.tracker.name}`
+    });
+    new import_obsidian3.Setting(contentEl).setName("\u30B9\u30C6\u30FC\u30BF\u30B9").addDropdown((dropdown) => {
+      for (const status of this.statuses) {
+        dropdown.addOption(String(status.id), status.name);
+      }
+      dropdown.setValue(String(this.statusId)).onChange((value) => {
+        this.statusId = Number(value);
+      });
+    });
+    new import_obsidian3.Setting(contentEl).setName("\u62C5\u5F53\u8005").addDropdown((dropdown) => {
+      dropdown.addOption("", "(\u672A\u5272\u5F53)");
+      for (const member of this.members) {
+        dropdown.addOption(String(member.id), member.name);
+      }
+      dropdown.setValue(this.assigneeId).onChange((value) => {
+        this.assigneeId = value;
+      });
+    });
+    new import_obsidian3.Setting(contentEl).setName("\u958B\u59CB\u65E5").addText((text) => {
+      text.inputEl.type = "date";
+      text.setValue(this.startDate).onChange((value) => {
+        this.startDate = value;
+      });
+    });
+    new import_obsidian3.Setting(contentEl).setName("\u671F\u65E5").addText((text) => {
+      text.inputEl.type = "date";
+      text.setValue(this.dueDate).onChange((value) => {
+        this.dueDate = value;
+      });
+    });
+    if (this.deliveryFieldId !== null) {
+      new import_obsidian3.Setting(contentEl).setName("\u7D0D\u671F").addText((text) => {
+        text.inputEl.type = "date";
+        text.setValue(this.delivery).onChange((value) => {
+          this.delivery = value;
+        });
+      });
+    }
+    new import_obsidian3.Setting(contentEl).setName("\u9032\u6357\u7387").addDropdown((dropdown) => {
+      for (let ratio = 0; ratio <= 100; ratio += 10) {
+        dropdown.addOption(String(ratio), `${ratio}%`);
+      }
+      dropdown.setValue(String(this.doneRatio)).onChange((value) => {
+        this.doneRatio = Number(value);
+      });
+    });
+    new import_obsidian3.Setting(contentEl).addButton(
+      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => void this.save())
+    ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+  }
+  /** 変更されたフィールドだけを集めた更新ペイロード。変更なしなら null */
+  buildPayload() {
+    var _a, _b, _c, _d, _e, _f;
+    const issue = this.issue;
+    if (!issue)
+      return null;
+    const payload = {};
+    if (this.statusId !== issue.status.id)
+      payload.status_id = this.statusId;
+    const currentAssignee = issue.assigned_to ? String(issue.assigned_to.id) : "";
+    if (this.assigneeId !== currentAssignee) {
+      payload.assigned_to_id = this.assigneeId === "" ? "" : Number(this.assigneeId);
+    }
+    if (this.startDate !== ((_a = issue.start_date) != null ? _a : ""))
+      payload.start_date = this.startDate;
+    if (this.dueDate !== ((_b = issue.due_date) != null ? _b : ""))
+      payload.due_date = this.dueDate;
+    if (((_c = this.doneRatio) != null ? _c : 0) !== ((_d = issue.done_ratio) != null ? _d : 0))
+      payload.done_ratio = this.doneRatio;
+    if (this.deliveryFieldId !== null) {
+      const field = (_e = issue.custom_fields) == null ? void 0 : _e.find((f) => f.id === this.deliveryFieldId);
+      const current = Array.isArray(field == null ? void 0 : field.value) ? field.value.join(", ") : (_f = field == null ? void 0 : field.value) != null ? _f : "";
+      if (this.delivery !== current) {
+        payload.custom_fields = [{ id: this.deliveryFieldId, value: this.delivery }];
+      }
+    }
+    return Object.keys(payload).length > 0 ? payload : null;
+  }
+  async save() {
+    if (this.saving || !this.issue)
+      return;
+    const payload = this.buildPayload();
+    if (!payload) {
+      this.close();
+      return;
+    }
+    this.saving = true;
+    try {
+      await this.client.updateIssue(this.issueId, payload);
+      const updated = await this.client.fetchIssue(this.issueId);
+      new import_obsidian3.Notice(`#${this.issueId} \u3092\u66F4\u65B0\u3057\u307E\u3057\u305F`);
+      this.onSaved(updated);
+      this.close();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      new import_obsidian3.Notice(`Redmine Gantt: ${message}`, 8e3);
+    } finally {
+      this.saving = false;
+    }
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
+// src/plan/PlanModal.ts
+var import_obsidian4 = require("obsidian");
+var PlanModal = class extends import_obsidian4.Modal {
   constructor(app, items, onSave) {
     super(app);
     this.items = items.map((item) => ({ ...item }));
@@ -463,7 +695,7 @@ var PlanModal = class extends import_obsidian3.Modal {
       text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u306E\u6700\u4E0A\u6BB5\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
     });
     this.items.forEach((item, index) => {
-      const setting = new import_obsidian3.Setting(contentEl);
+      const setting = new import_obsidian4.Setting(contentEl);
       setting.settingEl.addClass("rg-plan-setting");
       setting.addText((text) => {
         text.setPlaceholder("\u4E88\u5B9A\u540D").setValue(item.name).onChange((value) => {
@@ -494,7 +726,7 @@ var PlanModal = class extends import_obsidian3.Modal {
         })
       );
     });
-    new import_obsidian3.Setting(contentEl).addButton(
+    new import_obsidian4.Setting(contentEl).addButton(
       (button) => button.setButtonText("\u4E88\u5B9A\u3092\u8FFD\u52A0").onClick(() => {
         this.items.push({
           id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
@@ -506,7 +738,7 @@ var PlanModal = class extends import_obsidian3.Modal {
         this.render();
       })
     );
-    new import_obsidian3.Setting(contentEl).addButton(
+    new import_obsidian4.Setting(contentEl).addButton(
       (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
         this.onSave(this.items.filter((item) => item.name !== ""));
         this.close();
@@ -855,6 +1087,7 @@ function planTooltip(plan) {
 }
 
 // src/gantt/table.ts
+var import_obsidian5 = require("obsidian");
 var INDENT2 = 16;
 var MIN_COL_WIDTH = 48;
 var COLUMNS = [
@@ -866,7 +1099,8 @@ var COLUMNS = [
   { label: "\u958B\u59CB\u65E5", width: 96, cls: "rg-td-date" },
   { label: "\u671F\u65E5", width: 96, cls: "rg-td-date" },
   { label: "\u7D0D\u671F", width: 96, cls: "rg-td-date" },
-  { label: "\u9032\u6357", width: 96 }
+  { label: "\u9032\u6357", width: 96 },
+  { label: "", width: 44 }
 ];
 function defaultTableWidths() {
   return COLUMNS.map((c) => c.width);
@@ -968,6 +1202,13 @@ function renderRow(tbody, task, opts) {
   if (task.doneRatio >= 100)
     fill.addClass("rg-progress-done");
   ratioWrap.createSpan({ cls: "rg-progress-text", text: `${task.doneRatio}%` });
+  const editCell = row.createEl("td", { cls: "rg-td-edit" });
+  if (opts.onEdit) {
+    const btn = editCell.createEl("button", { cls: "rg-edit-btn" });
+    (0, import_obsidian5.setIcon)(btn, "pencil");
+    btn.setAttr("aria-label", `#${task.id} \u3092\u7DE8\u96C6`);
+    btn.addEventListener("click", () => opts.onEdit(task.id));
+  }
 }
 
 // src/gantt/GanttView.ts
@@ -990,7 +1231,7 @@ function parsePlanDate(s) {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
-var GanttView = class extends import_obsidian4.ItemView {
+var GanttView = class extends import_obsidian6.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.rawIssues = null;
@@ -1030,7 +1271,7 @@ var GanttView = class extends import_obsidian4.ItemView {
     container.addClass("rg-view");
     const toolbar = container.createDiv({ cls: "rg-toolbar" });
     const refreshBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian4.setIcon)(refreshBtn, "refresh-cw");
+    (0, import_obsidian6.setIcon)(refreshBtn, "refresh-cw");
     refreshBtn.setAttr("aria-label", "\u518D\u53D6\u5F97");
     refreshBtn.addEventListener("click", () => void this.refresh());
     const modeSelect = toolbar.createEl("select", { cls: "dropdown rg-mode-select" });
@@ -1087,7 +1328,7 @@ var GanttView = class extends import_obsidian4.ItemView {
     });
     this.rangeControls = toolbar.createDiv({ cls: "rg-range" });
     const prevBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian4.setIcon)(prevBtn, "chevron-left");
+    (0, import_obsidian6.setIcon)(prevBtn, "chevron-left");
     prevBtn.setAttr("aria-label", "\u524D\u6708\u3078");
     prevBtn.addEventListener("click", () => this.shiftRange(-1));
     this.monthInput = this.rangeControls.createEl("input", {
@@ -1104,7 +1345,7 @@ var GanttView = class extends import_obsidian4.ItemView {
       this.renderView();
     });
     const nextBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian4.setIcon)(nextBtn, "chevron-right");
+    (0, import_obsidian6.setIcon)(nextBtn, "chevron-right");
     nextBtn.setAttr("aria-label", "\u6B21\u6708\u3078");
     nextBtn.addEventListener("click", () => this.shiftRange(1));
     const monthsSelect = this.rangeControls.createEl("select", { cls: "dropdown" });
@@ -1126,11 +1367,11 @@ var GanttView = class extends import_obsidian4.ItemView {
       this.renderView();
     });
     this.assigneeBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian4.setIcon)(this.assigneeBtn, "users");
+    (0, import_obsidian6.setIcon)(this.assigneeBtn, "users");
     this.assigneeBtn.setAttr("aria-label", "\u62C5\u5F53\u8005\u3067\u7D5E\u308A\u8FBC\u307F");
     this.assigneeBtn.addEventListener("click", () => this.toggleAssigneePanel());
     const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian4.setIcon)(planBtn, "calendar-range");
+    (0, import_obsidian6.setIcon)(planBtn, "calendar-range");
     planBtn.setAttr("aria-label", "\u5168\u4F53\u4E88\u5B9A\u3092\u7DE8\u96C6");
     planBtn.addEventListener("click", () => {
       new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
@@ -1211,7 +1452,7 @@ var GanttView = class extends import_obsidian4.ItemView {
       this.setStatus("\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F");
       this.chartEl.empty();
       this.chartEl.createDiv({ cls: "rg-error", text: message });
-      new import_obsidian4.Notice(`Redmine Gantt: ${message}`);
+      new import_obsidian6.Notice(`Redmine Gantt: ${message}`);
     } finally {
       this.loading = false;
     }
@@ -1346,12 +1587,29 @@ var GanttView = class extends import_obsidian4.ItemView {
       }
     };
     if (this.plugin.settings.viewMode === "table") {
-      renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
+      renderTable(this.chartEl, model, {
+        ...opts,
+        widths: this.tableWidths,
+        onEdit: (issueId) => this.openEditModal(issueId)
+      });
     } else {
       renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
     }
     const suffix = this.lastFetchedAt ? ` / \u6700\u7D42\u66F4\u65B0 ${this.lastFetchedAt}` : "";
     this.setStatus(`\u8868\u793A ${visible.length} / \u53D6\u5F97 ${this.rawIssues.length}\u4EF6${suffix}`);
+  }
+  /** チケット編集モーダルを開き、保存後は該当チケットだけ差し替えて再描画する */
+  openEditModal(issueId) {
+    const client = new RedmineClient(this.plugin.settings);
+    new IssueEditModal(this.app, client, issueId, (updated) => {
+      if (this.rawIssues) {
+        const index = this.rawIssues.findIndex((issue) => issue.id === updated.id);
+        if (index >= 0) {
+          this.rawIssues[index] = updated;
+        }
+      }
+      this.renderView();
+    }).open();
   }
   setStatus(text) {
     var _a;
@@ -1363,7 +1621,7 @@ var GanttView = class extends import_obsidian4.ItemView {
 };
 
 // src/main.ts
-var RedmineGanttPlugin = class extends import_obsidian5.Plugin {
+var RedmineGanttPlugin = class extends import_obsidian7.Plugin {
   async onload() {
     await this.loadSettings();
     this.registerView(VIEW_TYPE_REDMINE_GANTT, (leaf) => new GanttView(leaf, this));
