@@ -44,7 +44,8 @@ var DEFAULT_SETTINGS = {
   activeFilter: "",
   viewMode: "gantt",
   planItems: [],
-  assigneeColors: []
+  assigneeColors: [],
+  tableFontSize: 11
 };
 var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -73,6 +74,20 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
       (dropdown) => dropdown.addOption("day", "\u65E5").addOption("week", "\u9031").addOption("month", "\u6708").setValue(this.plugin.settings.defaultScale).onChange(async (value) => {
         this.plugin.settings.defaultScale = value;
         await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u30C6\u30FC\u30D6\u30EB\u306E\u6587\u5B57\u30B5\u30A4\u30BA").setDesc("px\u5358\u4F4D\u3002\u884C\u306E\u9AD8\u3055\u30FB\u30D0\u30C3\u30B8\u985E\u3082\u6587\u5B57\u30B5\u30A4\u30BA\u306B\u9023\u52D5\u3057\u3066\u7E2E\u5C0F/\u62E1\u5927\u3057\u307E\u3059(\u65E2\u5B9A: 11)\u3002").addSlider(
+      (slider) => slider.setLimits(8, 16, 1).setValue(this.plugin.settings.tableFontSize).setDynamicTooltip().onChange(async (value) => {
+        this.plugin.settings.tableFontSize = value;
+        await this.plugin.saveSettings();
+        this.plugin.refreshGanttViews();
+      })
+    ).addExtraButton(
+      (button) => button.setIcon("rotate-ccw").setTooltip("\u65E2\u5B9A\u5024(11px)\u306B\u623B\u3059").onClick(async () => {
+        this.plugin.settings.tableFontSize = 11;
+        await this.plugin.saveSettings();
+        this.plugin.refreshGanttViews();
+        this.display();
       })
     );
     new import_obsidian.Setting(containerEl).setName("\u8868\u793A\u30D5\u30A3\u30EB\u30BF").setHeading().setDesc(
@@ -1130,6 +1145,7 @@ function renderTable(container, model, opts) {
   }
   const wrap = container.createDiv({ cls: "rg-table-wrap" });
   const table = wrap.createEl("table", { cls: "rg-table" });
+  table.style.fontSize = `${opts.fontSize}px`;
   const colgroup = table.createEl("colgroup");
   const cols = COLUMNS.map((_, i) => {
     const col = colgroup.createEl("col");
@@ -1659,6 +1675,10 @@ var GanttView = class extends import_obsidian6.ItemView {
       return a.start.getTime() - b.start.getTime();
     });
   }
+  /** 設定変更などによる外部からの再描画 */
+  rerender() {
+    this.renderView();
+  }
   /** 表示側フィルタを適用して再描画する(再取得はしない) */
   renderView() {
     if (!this.chartEl || !this.rawIssues)
@@ -1678,6 +1698,7 @@ var GanttView = class extends import_obsidian6.ItemView {
       renderTable(this.chartEl, model, {
         ...opts,
         widths: this.tableWidths,
+        fontSize: this.plugin.settings.tableFontSize,
         onEdit: (issueId) => this.openEditModal(issueId)
       });
     } else {
@@ -1747,5 +1768,14 @@ var RedmineGanttPlugin = class extends import_obsidian7.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+  /** 開いているガントビューを再描画する(設定変更の即時反映用) */
+  refreshGanttViews() {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_REDMINE_GANTT)) {
+      const view = leaf.view;
+      if (view instanceof GanttView) {
+        view.rerender();
+      }
+    }
   }
 };

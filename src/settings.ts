@@ -61,6 +61,8 @@ export interface RedmineGanttSettings {
 	viewMode: ViewMode;
 	planItems: PlanItem[];
 	assigneeColors: AssigneeColor[];
+	/** テーブルの文字サイズ(px)。行の高さも連動する */
+	tableFontSize: number;
 }
 
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
@@ -72,6 +74,7 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	viewMode: "gantt",
 	planItems: [],
 	assigneeColors: [],
+	tableFontSize: 11,
 };
 
 export class RedmineGanttSettingTab extends PluginSettingTab {
@@ -128,6 +131,32 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.defaultScale = value as GanttScale;
 						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("テーブルの文字サイズ")
+			.setDesc("px単位。行の高さ・バッジ類も文字サイズに連動して縮小/拡大します(既定: 11)。")
+			.addSlider((slider) =>
+				slider
+					.setLimits(8, 16, 1)
+					.setValue(this.plugin.settings.tableFontSize)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.tableFontSize = value;
+						await this.plugin.saveSettings();
+						this.plugin.refreshGanttViews();
+					})
+			)
+			.addExtraButton((button) =>
+				button
+					.setIcon("rotate-ccw")
+					.setTooltip("既定値(11px)に戻す")
+					.onClick(async () => {
+						this.plugin.settings.tableFontSize = 11;
+						await this.plugin.saveSettings();
+						this.plugin.refreshGanttViews();
+						this.display();
 					})
 			);
 

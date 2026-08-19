@@ -447,6 +447,11 @@ export class GanttView extends ItemView {
 		});
 	}
 
+	/** 設定変更などによる外部からの再描画 */
+	rerender(): void {
+		this.renderView();
+	}
+
 	/** 表示側フィルタを適用して再描画する(再取得はしない) */
 	private renderView(): void {
 		if (!this.chartEl || !this.rawIssues) return;
@@ -465,6 +470,7 @@ export class GanttView extends ItemView {
 			renderTable(this.chartEl, model, {
 				...opts,
 				widths: this.tableWidths,
+				fontSize: this.plugin.settings.tableFontSize,
 				onEdit: (issueId: number) => this.openEditModal(issueId),
 			});
 		} else {

@@ -415,8 +415,9 @@
 	border-collapse: separate;
 	border-spacing: 0;
 	table-layout: fixed;
+	/* 文字サイズは設定値をインラインで適用。行内の要素はemで連動する */
 	font-size: var(--font-ui-smaller);
-	line-height: 1.35;
+	line-height: 1.25;
 }
 
 .rg-table th,
@@ -435,13 +436,13 @@
 	background: var(--background-primary);
 	color: var(--text-muted);
 	font-weight: 600;
-	font-size: var(--font-ui-smaller);
-	padding: 5px 8px;
+	font-size: 0.95em;
+	padding: 4px 8px;
 	border-bottom: 2px solid var(--background-modifier-border);
 }
 
 .rg-table td {
-	padding: 2px 8px;
+	padding: 1px 8px;
 	border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 
@@ -617,6 +618,24 @@ body.rg-resizing {
 	background: var(--color-orange);
 	color: #ffffff;
 	font-weight: 600;
+}
+
+/* テーブル内の要素は文字サイズ設定に連動させる */
+.rg-table .rg-badge,
+.rg-table .rg-tracker,
+.rg-table .rg-assignee-chip,
+.rg-table .rg-due {
+	font-size: 0.95em;
+}
+
+.rg-table .rg-progress-text {
+	font-size: 0.9em;
+	width: 3em;
+}
+
+.rg-table .rg-edit-btn svg {
+	width: 1.2em;
+	height: 1.2em;
 }
 
 /* 進捗バー */

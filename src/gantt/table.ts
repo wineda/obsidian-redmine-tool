@@ -27,6 +27,8 @@ export function defaultTableWidths(): number[] {
 export interface TableOptions extends RenderOptions {
 	/** 列幅(px)。参照を保持したまま書き換えることで呼び出し側に永続される */
 	widths: number[];
+	/** テーブルの文字サイズ(px)。行の高さも連動する */
+	fontSize: number;
 	/** 編集ボタン押下時に呼ばれる。未指定なら編集列を出さない */
 	onEdit?: (issueId: number) => void;
 }
@@ -43,6 +45,7 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 
 	const wrap = container.createDiv({ cls: "rg-table-wrap" });
 	const table = wrap.createEl("table", { cls: "rg-table" });
+	table.style.fontSize = `${opts.fontSize}px`;
 
 	const colgroup = table.createEl("colgroup");
 	const cols: HTMLTableColElement[] = COLUMNS.map((_, i) => {

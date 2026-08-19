@@ -57,4 +57,14 @@ export default class RedmineGanttPlugin extends Plugin {
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 	}
+
+	/** 開いているガントビューを再描画する(設定変更の即時反映用) */
+	refreshGanttViews(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_REDMINE_GANTT)) {
+			const view = leaf.view;
+			if (view instanceof GanttView) {
+				view.rerender();
+			}
+		}
+	}
 }
