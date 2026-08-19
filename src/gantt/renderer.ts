@@ -8,9 +8,7 @@ import {
 	weekendBands,
 } from "./scale";
 
-const ROW_HEIGHT = 30;
 const HEADER_HEIGHT = 40;
-const BAR_PADDING = 7;
 export const DEFAULT_LEFT_WIDTH = 480;
 const MIN_LEFT_WIDTH = 200;
 const INDENT = 16;
@@ -40,6 +38,8 @@ export interface RenderOptions {
 	issueUrl: (id: number) => string;
 	/** 担当者絞り込みモード時の色。対象外・モード無効時は null */
 	assigneeColor: (assignee: string) => string | null;
+	/** 文字サイズ(px)。行の高さも連動する */
+	fontSize: number;
 	/** ガント左ペイン(チケット一覧)の幅(px) */
 	leftWidth?: number;
 	/** 左ペイン幅をドラッグで変更したときに呼ばれる(呼び出し側で保持する) */
@@ -76,15 +76,19 @@ export function renderGantt(
 
 	const ppd = PX_PER_DAY[scale];
 	const chartWidth = (range.days + 1) * ppd;
+	// 文字サイズに応じて行の高さ・バーの余白を連動させる
+	const rowHeight = Math.max(16, Math.round(opts.fontSize * 2));
+	const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
 	const planTop = HEADER_HEIGHT;
-	const taskTop = planTop + plans.length * ROW_HEIGHT;
-	const chartHeight = taskTop + model.tasks.length * ROW_HEIGHT;
+	const taskTop = planTop + plans.length * rowHeight;
+	const chartHeight = taskTop + model.tasks.length * rowHeight;
 
 	const body = container.createDiv({ cls: "rg-body" });
 
 	// ---- 左ペイン: 全体予定+チケット一覧(横スクロール時も固定) ----
 	const left = body.createDiv({ cls: "rg-left" });
 	left.style.width = `${opts.leftWidth ?? DEFAULT_LEFT_WIDTH}px`;
+	left.style.fontSize = `${opts.fontSize}px`;
 	const leftHeader = left.createDiv({ cls: "rg-left-header" });
 	leftHeader.style.height = `${HEADER_HEIGHT}px`;
 	leftHeader.setText("チケット");
@@ -112,7 +116,7 @@ export function renderGantt(
 
 	for (const plan of plans) {
 		const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
-		row.style.height = `${ROW_HEIGHT}px`;
+		row.style.height = `${rowHeight}px`;
 		row.style.paddingLeft = "8px";
 		row.createSpan({ cls: `rg-plan-dot rg-plan-${plan.status}` });
 		row.createSpan({ cls: "rg-plan-name", text: plan.name });
@@ -124,7 +128,7 @@ export function renderGantt(
 
 	for (const task of model.tasks) {
 		const row = left.createDiv({ cls: "rg-left-row" });
-		row.style.height = `${ROW_HEIGHT}px`;
+		row.style.height = `${rowHeight}px`;
 		row.style.paddingLeft = `${8 + task.depth * INDENT}px`;
 		row.createEl("a", {
 			cls: "rg-id-link",
@@ -141,11 +145,11 @@ export function renderGantt(
 		if (task.isClosed) row.addClass("rg-row-closed");
 		if (task.isContext) row.addClass("rg-row-context");
 		if (task.assignee) {
-			const assignee = row.createSpan({ cls: "rg-assignee", text: task.assignee });
-			const color = opts.assigneeColor(task.assignee);
+			const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+			const color = task.isContext ? null : opts.assigneeColor(task.assignee);
 			if (color) {
-				assignee.style.color = color;
-				assignee.style.fontWeight = "600";
+				chip.style.backgroundColor = color;
+				chip.addClass("rg-assignee-chip-colored");
 			}
 		}
 	}
@@ -166,7 +170,7 @@ export function renderGantt(
 				x: 0,
 				y: planTop,
 				width: chartWidth,
-				height: plans.length * ROW_HEIGHT,
+				height: plans.length * rowHeight,
 				class: "rg-plan-area",
 			})
 		);
@@ -196,7 +200,7 @@ export function renderGantt(
 	// 行区切りの横線
 	const totalRows = plans.length + model.tasks.length;
 	for (let i = 0; i <= totalRows; i++) {
-		const y = HEADER_HEIGHT + i * ROW_HEIGHT;
+		const y = HEADER_HEIGHT + i * rowHeight;
 		root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
 	}
 	// 全体予定とチケットの区切り線
@@ -228,8 +232,8 @@ export function renderGantt(
 		if (!span) return;
 		const x = diffDays(range.start, span.s) * ppd;
 		const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-		const y = planTop + i * ROW_HEIGHT + BAR_PADDING;
-		const h = ROW_HEIGHT - BAR_PADDING * 2;
+		const y = planTop + i * rowHeight + barPadding;
+		const h = rowHeight - barPadding * 2;
 		const bar = svg("rect", {
 			x,
 			y,
@@ -251,8 +255,8 @@ export function renderGantt(
 		if (!span) return;
 		const x = diffDays(range.start, span.s) * ppd;
 		const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-		const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
-		const h = ROW_HEIGHT - BAR_PADDING * 2;
+		const y = taskTop + i * rowHeight + barPadding;
+		const h = rowHeight - barPadding * 2;
 
 		const group = svg("g", { class: "rg-bar-group" });
 

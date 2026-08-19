@@ -76,7 +76,7 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian.Setting(containerEl).setName("\u30C6\u30FC\u30D6\u30EB\u306E\u6587\u5B57\u30B5\u30A4\u30BA").setDesc("px\u5358\u4F4D\u3002\u884C\u306E\u9AD8\u3055\u30FB\u30D0\u30C3\u30B8\u985E\u3082\u6587\u5B57\u30B5\u30A4\u30BA\u306B\u9023\u52D5\u3057\u3066\u7E2E\u5C0F/\u62E1\u5927\u3057\u307E\u3059(\u65E2\u5B9A: 11)\u3002").addSlider(
+    new import_obsidian.Setting(containerEl).setName("\u6587\u5B57\u30B5\u30A4\u30BA").setDesc("\u30C6\u30FC\u30D6\u30EB\u3068\u30AC\u30F3\u30C8\u306E\u4E00\u89A7\u90E8\u5206\u306B\u9069\u7528(px\u5358\u4F4D)\u3002\u884C\u306E\u9AD8\u3055\u30FB\u30D0\u30C3\u30B8\u985E\u3082\u9023\u52D5\u3057\u3066\u7E2E\u5C0F/\u62E1\u5927\u3057\u307E\u3059(\u65E2\u5B9A: 11)\u3002").addSlider(
       (slider) => slider.setLimits(8, 16, 1).setValue(this.plugin.settings.tableFontSize).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.tableFontSize = value;
         await this.plugin.saveSettings();
@@ -861,9 +861,7 @@ function weekendBands(range, scale) {
 }
 
 // src/gantt/renderer.ts
-var ROW_HEIGHT = 30;
 var HEADER_HEIGHT = 40;
-var BAR_PADDING = 7;
 var DEFAULT_LEFT_WIDTH = 480;
 var MIN_LEFT_WIDTH = 200;
 var INDENT = 16;
@@ -892,12 +890,15 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   const ppd = PX_PER_DAY[scale];
   const chartWidth = (range.days + 1) * ppd;
+  const rowHeight = Math.max(16, Math.round(opts.fontSize * 2));
+  const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
   const planTop = HEADER_HEIGHT;
-  const taskTop = planTop + plans.length * ROW_HEIGHT;
-  const chartHeight = taskTop + model.tasks.length * ROW_HEIGHT;
+  const taskTop = planTop + plans.length * rowHeight;
+  const chartHeight = taskTop + model.tasks.length * rowHeight;
   const body = container.createDiv({ cls: "rg-body" });
   const left = body.createDiv({ cls: "rg-left" });
   left.style.width = `${(_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH}px`;
+  left.style.fontSize = `${opts.fontSize}px`;
   const leftHeader = left.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
@@ -923,7 +924,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   });
   for (const plan of plans) {
     const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
-    row.style.height = `${ROW_HEIGHT}px`;
+    row.style.height = `${rowHeight}px`;
     row.style.paddingLeft = "8px";
     row.createSpan({ cls: `rg-plan-dot rg-plan-${plan.status}` });
     row.createSpan({ cls: "rg-plan-name", text: plan.name });
@@ -934,7 +935,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   for (const task of model.tasks) {
     const row = left.createDiv({ cls: "rg-left-row" });
-    row.style.height = `${ROW_HEIGHT}px`;
+    row.style.height = `${rowHeight}px`;
     row.style.paddingLeft = `${8 + task.depth * INDENT}px`;
     row.createEl("a", {
       cls: "rg-id-link",
@@ -953,11 +954,11 @@ function renderGantt(container, model, plans, scale, range, opts) {
     if (task.isContext)
       row.addClass("rg-row-context");
     if (task.assignee) {
-      const assignee = row.createSpan({ cls: "rg-assignee", text: task.assignee });
-      const color = opts.assigneeColor(task.assignee);
+      const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+      const color = task.isContext ? null : opts.assigneeColor(task.assignee);
       if (color) {
-        assignee.style.color = color;
-        assignee.style.fontWeight = "600";
+        chip.style.backgroundColor = color;
+        chip.addClass("rg-assignee-chip-colored");
       }
     }
   }
@@ -974,7 +975,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
         x: 0,
         y: planTop,
         width: chartWidth,
-        height: plans.length * ROW_HEIGHT,
+        height: plans.length * rowHeight,
         class: "rg-plan-area"
       })
     );
@@ -998,7 +999,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   const totalRows = plans.length + model.tasks.length;
   for (let i = 0; i <= totalRows; i++) {
-    const y = HEADER_HEIGHT + i * ROW_HEIGHT;
+    const y = HEADER_HEIGHT + i * rowHeight;
     root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
   }
   if (plans.length > 0) {
@@ -1027,8 +1028,8 @@ function renderGantt(container, model, plans, scale, range, opts) {
       return;
     const x = diffDays(range.start, span.s) * ppd;
     const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-    const y = planTop + i * ROW_HEIGHT + BAR_PADDING;
-    const h = ROW_HEIGHT - BAR_PADDING * 2;
+    const y = planTop + i * rowHeight + barPadding;
+    const h = rowHeight - barPadding * 2;
     const bar = svg("rect", {
       x,
       y,
@@ -1050,8 +1051,8 @@ function renderGantt(container, model, plans, scale, range, opts) {
       return;
     const x = diffDays(range.start, span.s) * ppd;
     const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-    const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
-    const h = ROW_HEIGHT - BAR_PADDING * 2;
+    const y = taskTop + i * rowHeight + barPadding;
+    const h = rowHeight - barPadding * 2;
     const group = svg("g", { class: "rg-bar-group" });
     const assigneeColor = task.assignee && !task.isContext ? opts.assigneeColor(task.assignee) : null;
     const barClass = "rg-bar" + (task.isClosed ? " rg-bar-closed" : "") + (task.isContext ? " rg-bar-context" : "") + (task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
@@ -1689,6 +1690,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     const opts = {
       issueUrl: (id) => client.issueUrl(id),
       assigneeColor: (assignee) => this.assigneeColor(assignee),
+      fontSize: this.plugin.settings.tableFontSize,
       leftWidth: this.ganttLeftWidth,
       onLeftWidthChange: (width) => {
         this.ganttLeftWidth = width;
@@ -1698,7 +1700,6 @@ var GanttView = class extends import_obsidian6.ItemView {
       renderTable(this.chartEl, model, {
         ...opts,
         widths: this.tableWidths,
-        fontSize: this.plugin.settings.tableFontSize,
         onEdit: (issueId) => this.openEditModal(issueId)
       });
     } else {

@@ -27,8 +27,6 @@ export function defaultTableWidths(): number[] {
 export interface TableOptions extends RenderOptions {
 	/** 列幅(px)。参照を保持したまま書き換えることで呼び出し側に永続される */
 	widths: number[];
-	/** テーブルの文字サイズ(px)。行の高さも連動する */
-	fontSize: number;
 	/** 編集ボタン押下時に呼ばれる。未指定なら編集列を出さない */
 	onEdit?: (issueId: number) => void;
 }

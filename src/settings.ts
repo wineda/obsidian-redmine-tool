@@ -135,8 +135,8 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("テーブルの文字サイズ")
-			.setDesc("px単位。行の高さ・バッジ類も文字サイズに連動して縮小/拡大します(既定: 11)。")
+			.setName("文字サイズ")
+			.setDesc("テーブルとガントの一覧部分に適用(px単位)。行の高さ・バッジ類も連動して縮小/拡大します(既定: 11)。")
 			.addSlider((slider) =>
 				slider
 					.setLimits(8, 16, 1)

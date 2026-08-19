@@ -461,6 +461,7 @@ export class GanttView extends ItemView {
 		const opts = {
 			issueUrl: (id: number) => client.issueUrl(id),
 			assigneeColor: (assignee: string) => this.assigneeColor(assignee),
+			fontSize: this.plugin.settings.tableFontSize,
 			leftWidth: this.ganttLeftWidth,
 			onLeftWidthChange: (width: number) => {
 				this.ganttLeftWidth = width;
@@ -470,7 +471,6 @@ export class GanttView extends ItemView {
 			renderTable(this.chartEl, model, {
 				...opts,
 				widths: this.tableWidths,
-				fontSize: this.plugin.settings.tableFontSize,
 				onEdit: (issueId: number) => this.openEditModal(issueId),
 			});
 		} else {

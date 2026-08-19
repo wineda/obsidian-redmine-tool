@@ -110,8 +110,7 @@
 
 /* 絞り込み条件外だがツリー維持のために補って表示する親 */
 .rg-row-context .rg-issue-link,
-.rg-row-context .rg-id-link,
-.rg-row-context .rg-assignee {
+.rg-row-context .rg-id-link {
 	color: var(--text-faint);
 }
 
@@ -150,11 +149,23 @@
 	opacity: 0.4;
 }
 
-.rg-assignee {
+/* 左ペイン内の要素は文字サイズ設定(インライン指定)にemで連動する */
+.rg-left .rg-tracker {
+	font-size: 0.9em;
+}
+
+.rg-left-row .rg-assignee-chip {
 	flex: 0 0 auto;
 	margin-left: auto;
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
+	font-size: 0.9em;
+}
+
+.rg-row-context .rg-assignee-chip {
+	opacity: 0.55;
+}
+
+.rg-left .rg-plan-status {
+	font-size: 0.9em;
 }
 
 /* ---- SVGチャート ---- */
