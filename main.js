@@ -215,6 +215,10 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
   /**
    * 保存クエリでの取得。value は「クエリID」または「プロジェクト識別子:クエリID」。
    * 絞り込み条件(ステータス含む)はクエリ側の定義に従うため status_id は付けない。
+   *
+   * Redmineは query_id 単体指定だとグローバル(全プロジェクト向け)クエリしか
+   * 解決しないため、プロジェクト内で保存されたクエリは404になる。その場合は
+   * /queries.json から所属プロジェクトを調べて project_id 付きで再試行する。
    */
   async fetchQueryIssues(value) {
     const m = value.trim().match(/^(.+)[::](\d+)$/);
@@ -228,16 +232,51 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
     try {
       return await this.fetchIssuesPaged(params);
     } catch (e) {
-      if (e instanceof RedmineApiError && e.status === 404) {
+      if (!(e instanceof RedmineApiError) || e.status !== 404)
+        throw e;
+      if (params.project_id) {
         throw new RedmineApiError(
           404,
-          `\u4FDD\u5B58\u30AF\u30A8\u30EA(ID: ${params.query_id})\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002\u6B21\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044:
-\u30FB\u30AF\u30A8\u30EAID\u304C\u6B63\u3057\u3044\u304B(Redmine\u306E\u30C1\u30B1\u30C3\u30C8\u4E00\u89A7URL\u306E query_id= \u306E\u6570\u5024)
-\u30FBAPI\u30AD\u30FC\u306E\u30E6\u30FC\u30B6\u30FC\u304C\u305D\u306E\u30AF\u30A8\u30EA\u3092\u4F7F\u3048\u308B\u304B(\u81EA\u5206\u306E\u30AF\u30A8\u30EA\u3001\u307E\u305F\u306F\u516C\u958B\u30AF\u30A8\u30EA\u306E\u307F)
-\u30FB\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5185\u3067\u4FDD\u5B58\u3057\u305F\u30AF\u30A8\u30EA\u306F\u300C\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50:\u30AF\u30A8\u30EAID\u300D\u306E\u5F62\u5F0F\u3067\u6307\u5B9A` + (params.project_id ? `(\u73FE\u5728\u306E\u6307\u5B9A\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8: ${params.project_id})` : "")
+          `\u4FDD\u5B58\u30AF\u30A8\u30EA(ID: ${params.query_id}\u3001\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8: ${params.project_id})\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002
+\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50\u3068\u30AF\u30A8\u30EAID\u306E\u7D44\u307F\u5408\u308F\u305B\u3001\u304A\u3088\u3073API\u30AD\u30FC\u306E\u30E6\u30FC\u30B6\u30FC\u304C\u305D\u306E\u30AF\u30A8\u30EA\u3092\u4F7F\u3048\u308B\u304B\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002`
         );
       }
-      throw e;
+      const queryId = Number(params.query_id);
+      const found = await this.findQuery(queryId);
+      if (found && found.project_id) {
+        return this.fetchIssuesPaged({
+          query_id: params.query_id,
+          project_id: String(found.project_id)
+        });
+      }
+      if (found) {
+        throw new RedmineApiError(
+          404,
+          `\u4FDD\u5B58\u30AF\u30A8\u30EA\u300C${found.name}\u300D(ID: ${queryId})\u306F\u5B58\u5728\u3057\u307E\u3059\u304C\u3001\u30C1\u30B1\u30C3\u30C8\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F(HTTP 404)\u3002`
+        );
+      }
+      throw new RedmineApiError(
+        404,
+        `\u4FDD\u5B58\u30AF\u30A8\u30EA(ID: ${queryId})\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002\u6B21\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044:
+\u30FB\u30AF\u30A8\u30EAID\u304C\u6B63\u3057\u3044\u304B(Redmine\u306E\u30C1\u30B1\u30C3\u30C8\u4E00\u89A7URL\u306E query_id= \u306E\u6570\u5024)
+\u30FBAPI\u30AD\u30FC\u306E\u30E6\u30FC\u30B6\u30FC\u304C\u305D\u306E\u30AF\u30A8\u30EA\u3092\u4F7F\u3048\u308B\u304B(\u81EA\u5206\u306E\u30AF\u30A8\u30EA\u3001\u307E\u305F\u306F\u516C\u958B\u30AF\u30A8\u30EA\u306E\u307F)`
+      );
+    }
+  }
+  /** /queries.json から指定IDのクエリを探す(見えるクエリのみ返る) */
+  async findQuery(queryId) {
+    let offset = 0;
+    for (; ; ) {
+      const res = await this.request("GET", "/queries.json", {
+        limit: String(PAGE_SIZE),
+        offset: String(offset)
+      });
+      const hit = res.queries.find((q) => q.id === queryId);
+      if (hit)
+        return hit;
+      offset += res.queries.length;
+      if (res.queries.length === 0 || offset >= res.total_count)
+        return null;
     }
   }
   /**

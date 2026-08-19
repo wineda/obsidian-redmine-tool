@@ -82,6 +82,7 @@ obsidian-redmine-tool/
 |---|---|---|
 | `/issues.json` | チケット取得 | `query_id`(保存クエリ), `parent_id=~ID`(全子孫の一括取得。未対応環境は `parent_id=ID` を1親ずつ辿るBFSにフォールバック), `status_id`, `limit`/`offset` |
 | `/issues/:id.json` | 親チケット配下フィルタのルートチケット取得 | — |
+| `/queries.json` | 保存クエリの所属プロジェクト解決(query_id単体で404の場合) | `limit`/`offset` |
 | `/projects.json` | 設定画面のプロジェクト選択肢 | `limit`/`offset` |
 | `/projects/:id/versions.json` | マイルストーン表示 | — |
 

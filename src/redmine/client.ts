@@ -5,6 +5,8 @@ import type {
 	RedmineIssuesResponse,
 	RedmineProject,
 	RedmineProjectsResponse,
+	RedmineQueriesResponse,
+	RedmineQuery,
 } from "./types";
 
 const PAGE_SIZE = 100;
@@ -118,6 +120,10 @@ export class RedmineClient {
 	/**
 	 * 保存クエリでの取得。value は「クエリID」または「プロジェクト識別子:クエリID」。
 	 * 絞り込み条件(ステータス含む)はクエリ側の定義に従うため status_id は付けない。
+	 *
+	 * Redmineは query_id 単体指定だとグローバル(全プロジェクト向け)クエリしか
+	 * 解決しないため、プロジェクト内で保存されたクエリは404になる。その場合は
+	 * /queries.json から所属プロジェクトを調べて project_id 付きで再試行する。
 	 */
 	private async fetchQueryIssues(value: string): Promise<RedmineIssue[]> {
 		// 全角コロンでの区切りも受け付ける
@@ -134,17 +140,50 @@ export class RedmineClient {
 		try {
 			return await this.fetchIssuesPaged(params);
 		} catch (e) {
-			if (e instanceof RedmineApiError && e.status === 404) {
+			if (!(e instanceof RedmineApiError) || e.status !== 404) throw e;
+			if (params.project_id) {
 				throw new RedmineApiError(
 					404,
-					`保存クエリ(ID: ${params.query_id})が見つかりません。次を確認してください:\n` +
-						`・クエリIDが正しいか(Redmineのチケット一覧URLの query_id= の数値)\n` +
-						`・APIキーのユーザーがそのクエリを使えるか(自分のクエリ、または公開クエリのみ)\n` +
-						`・プロジェクト内で保存したクエリは「プロジェクト識別子:クエリID」の形式で指定` +
-						(params.project_id ? `(現在の指定プロジェクト: ${params.project_id})` : "")
+					`保存クエリ(ID: ${params.query_id}、プロジェクト: ${params.project_id})が見つかりません。\n` +
+						`プロジェクト識別子とクエリIDの組み合わせ、およびAPIキーのユーザーがそのクエリを使えるかを確認してください。`
 				);
 			}
-			throw e;
+			// プロジェクトスコープのクエリの可能性: 一覧から所属プロジェクトを解決して再試行
+			const queryId = Number(params.query_id);
+			const found = await this.findQuery(queryId);
+			if (found && found.project_id) {
+				return this.fetchIssuesPaged({
+					query_id: params.query_id,
+					project_id: String(found.project_id),
+				});
+			}
+			if (found) {
+				throw new RedmineApiError(
+					404,
+					`保存クエリ「${found.name}」(ID: ${queryId})は存在しますが、チケットの取得に失敗しました(HTTP 404)。`
+				);
+			}
+			throw new RedmineApiError(
+				404,
+				`保存クエリ(ID: ${queryId})が見つかりません。次を確認してください:\n` +
+					`・クエリIDが正しいか(Redmineのチケット一覧URLの query_id= の数値)\n` +
+					`・APIキーのユーザーがそのクエリを使えるか(自分のクエリ、または公開クエリのみ)`
+			);
+		}
+	}
+
+	/** /queries.json から指定IDのクエリを探す(見えるクエリのみ返る) */
+	private async findQuery(queryId: number): Promise<RedmineQuery | null> {
+		let offset = 0;
+		for (;;) {
+			const res = await this.request<RedmineQueriesResponse>("GET", "/queries.json", {
+				limit: String(PAGE_SIZE),
+				offset: String(offset),
+			});
+			const hit = res.queries.find((q) => q.id === queryId);
+			if (hit) return hit;
+			offset += res.queries.length;
+			if (res.queries.length === 0 || offset >= res.total_count) return null;
 		}
 	}
 

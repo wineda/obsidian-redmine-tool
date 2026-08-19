@@ -50,3 +50,18 @@ export interface RedmineProjectsResponse {
 	offset: number;
 	limit: number;
 }
+
+export interface RedmineQuery {
+	id: number;
+	name: string;
+	is_public: boolean;
+	/** プロジェクトスコープのクエリのみ設定される */
+	project_id?: number | null;
+}
+
+export interface RedmineQueriesResponse {
+	queries: RedmineQuery[];
+	total_count: number;
+	offset: number;
+	limit: number;
+}
