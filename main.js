@@ -882,7 +882,7 @@ function clipSpan(start, end, range) {
   };
 }
 function renderGantt(container, model, plans, scale, range, opts) {
-  var _a;
+  var _a, _b;
   container.empty();
   if (model.tasks.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
@@ -892,8 +892,25 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const chartWidth = (range.days + 1) * ppd;
   const rowHeight = Math.max(16, Math.round(opts.fontSize * 2));
   const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
+  const datedPlans = plans.filter((p) => p.start !== null && p.end !== null).sort((a, b) => a.start.getTime() - b.start.getTime());
+  const laneEnds = [];
+  const planLane = /* @__PURE__ */ new Map();
+  for (const plan of datedPlans) {
+    const isSingleDay = diffDays(plan.start, plan.end) === 0;
+    const labelDays = isSingleDay ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / PX_PER_DAY[scale]) : 0;
+    const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
+    let lane = laneEnds.findIndex((end) => plan.start > end);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(effectiveEnd);
+    } else {
+      laneEnds[lane] = effectiveEnd;
+    }
+    planLane.set(plan, lane);
+  }
+  const planLaneCount = laneEnds.length;
   const planTop = HEADER_HEIGHT;
-  const taskTop = planTop + plans.length * rowHeight;
+  const taskTop = planTop + planLaneCount * rowHeight;
   const chartHeight = taskTop + model.tasks.length * rowHeight;
   const body = container.createDiv({ cls: "rg-body" });
   const left = body.createDiv({ cls: "rg-left" });
@@ -922,16 +939,11 @@ function renderGantt(container, model, plans, scale, range, opts) {
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   });
-  for (const plan of plans) {
-    const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
-    row.style.height = `${rowHeight}px`;
-    row.style.paddingLeft = "8px";
-    row.createSpan({ cls: `rg-plan-dot rg-plan-${plan.status}` });
-    row.createSpan({ cls: "rg-plan-name", text: plan.name });
-    row.createSpan({
-      cls: `rg-plan-status rg-plan-${plan.status}`,
-      text: PLAN_STATUS_LABELS[plan.status]
-    });
+  if (planLaneCount > 0) {
+    const planLabel = left.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
+    planLabel.style.height = `${planLaneCount * rowHeight}px`;
+    planLabel.style.paddingLeft = "8px";
+    planLabel.setText("\u5168\u4F53\u4E88\u5B9A");
   }
   for (const task of model.tasks) {
     const row = left.createDiv({ cls: "rg-left-row" });
@@ -969,13 +981,13 @@ function renderGantt(container, model, plans, scale, range, opts) {
     viewBox: `0 0 ${chartWidth} ${chartHeight}`
   });
   chart.appendChild(root);
-  if (plans.length > 0) {
+  if (planLaneCount > 0) {
     root.appendChild(
       svg("rect", {
         x: 0,
         y: planTop,
         width: chartWidth,
-        height: plans.length * rowHeight,
+        height: planLaneCount * rowHeight,
         class: "rg-plan-area"
       })
     );
@@ -997,12 +1009,12 @@ function renderGantt(container, model, plans, scale, range, opts) {
       svg("line", { x1: x, y1: HEADER_HEIGHT, x2: x, y2: chartHeight, class: "rg-grid" })
     );
   }
-  const totalRows = plans.length + model.tasks.length;
+  const totalRows = planLaneCount + model.tasks.length;
   for (let i = 0; i <= totalRows; i++) {
     const y = HEADER_HEIGHT + i * rowHeight;
     root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
   }
-  if (plans.length > 0) {
+  if (planLaneCount > 0) {
     root.appendChild(
       svg("line", { x1: 0, y1: taskTop, x2: chartWidth, y2: taskTop, class: "rg-separator" })
     );
@@ -1020,29 +1032,58 @@ function renderGantt(container, model, plans, scale, range, opts) {
     t.textContent = tick.label;
     root.appendChild(t);
   }
-  plans.forEach((plan, i) => {
-    if (!plan.start || !plan.end)
-      return;
-    const span = clipSpan(plan.start, plan.end, range);
-    if (!span)
-      return;
-    const x = diffDays(range.start, span.s) * ppd;
-    const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-    const y = planTop + i * rowHeight + barPadding;
+  for (const plan of datedPlans) {
+    const lane = (_b = planLane.get(plan)) != null ? _b : 0;
+    const y = planTop + lane * rowHeight + barPadding;
     const h = rowHeight - barPadding * 2;
-    const bar = svg("rect", {
-      x,
-      y,
-      width: w,
-      height: h,
-      rx: 3,
-      class: `rg-plan-bar rg-plan-${plan.status}`
-    });
+    const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
+    const group = svg("g", {});
     const title = svg("title");
     title.textContent = planTooltip(plan);
-    bar.appendChild(title);
-    root.appendChild(bar);
-  });
+    group.appendChild(title);
+    if (diffDays(plan.start, plan.end) === 0) {
+      if (plan.start < range.start || plan.start > range.end)
+        continue;
+      const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
+      const half = Math.max(5, Math.round(h / 2));
+      group.appendChild(
+        svg("polygon", {
+          points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+          class: `rg-plan-marker rg-plan-${plan.status}`
+        })
+      );
+      const label = svg("text", {
+        x: cx + half + 4,
+        y: textBaseline,
+        "font-size": opts.fontSize,
+        class: `rg-plan-marker-label rg-plan-${plan.status}`
+      });
+      label.textContent = plan.name;
+      group.appendChild(label);
+    } else {
+      const span = clipSpan(plan.start, plan.end, range);
+      if (!span)
+        continue;
+      const x = diffDays(range.start, span.s) * ppd;
+      const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
+      group.appendChild(
+        svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
+      );
+      const maxChars = Math.floor((w - 10) / opts.fontSize);
+      if (maxChars >= 2) {
+        const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+        const label = svg("text", {
+          x: x + 6,
+          y: textBaseline,
+          "font-size": opts.fontSize,
+          class: "rg-plan-bar-label"
+        });
+        label.textContent = name;
+        group.appendChild(label);
+      }
+    }
+    root.appendChild(group);
+  }
   model.tasks.forEach((task, i) => {
     if (!task.start || !task.due)
       return;

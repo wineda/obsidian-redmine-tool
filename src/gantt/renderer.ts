@@ -3,6 +3,7 @@ import { GanttScale, PLAN_STATUS_LABELS, PlanStatus } from "../settings";
 import {
 	PX_PER_DAY,
 	TimeRange,
+	addDays,
 	computeTicks,
 	diffDays,
 	weekendBands,
@@ -79,8 +80,33 @@ export function renderGantt(
 	// 文字サイズに応じて行の高さ・バーの余白を連動させる
 	const rowHeight = Math.max(16, Math.round(opts.fontSize * 2));
 	const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
+
+	// 全体予定を重ならないようにレーンへ詰める(日付のない予定はチャートに出せないため除外)
+	const datedPlans = plans
+		.filter((p): p is PlanRow & { start: Date; end: Date } => p.start !== null && p.end !== null)
+		.sort((a, b) => a.start.getTime() - b.start.getTime());
+	const laneEnds: Date[] = [];
+	const planLane = new Map<PlanRow, number>();
+	for (const plan of datedPlans) {
+		// 1日予定は▼の右にタイトルが伸びるため、その分の幅もレーン上で確保する
+		const isSingleDay = diffDays(plan.start, plan.end) === 0;
+		const labelDays = isSingleDay
+			? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / PX_PER_DAY[scale])
+			: 0;
+		const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
+		let lane = laneEnds.findIndex((end) => plan.start > end);
+		if (lane === -1) {
+			lane = laneEnds.length;
+			laneEnds.push(effectiveEnd);
+		} else {
+			laneEnds[lane] = effectiveEnd;
+		}
+		planLane.set(plan, lane);
+	}
+	const planLaneCount = laneEnds.length;
+
 	const planTop = HEADER_HEIGHT;
-	const taskTop = planTop + plans.length * rowHeight;
+	const taskTop = planTop + planLaneCount * rowHeight;
 	const chartHeight = taskTop + model.tasks.length * rowHeight;
 
 	const body = container.createDiv({ cls: "rg-body" });
@@ -114,16 +140,11 @@ export function renderGantt(
 		document.addEventListener("mouseup", onUp);
 	});
 
-	for (const plan of plans) {
-		const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
-		row.style.height = `${rowHeight}px`;
-		row.style.paddingLeft = "8px";
-		row.createSpan({ cls: `rg-plan-dot rg-plan-${plan.status}` });
-		row.createSpan({ cls: "rg-plan-name", text: plan.name });
-		row.createSpan({
-			cls: `rg-plan-status rg-plan-${plan.status}`,
-			text: PLAN_STATUS_LABELS[plan.status],
-		});
+	if (planLaneCount > 0) {
+		const planLabel = left.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
+		planLabel.style.height = `${planLaneCount * rowHeight}px`;
+		planLabel.style.paddingLeft = "8px";
+		planLabel.setText("全体予定");
 	}
 
 	for (const task of model.tasks) {
@@ -164,13 +185,13 @@ export function renderGantt(
 	chart.appendChild(root);
 
 	// 全体予定エリアの背景
-	if (plans.length > 0) {
+	if (planLaneCount > 0) {
 		root.appendChild(
 			svg("rect", {
 				x: 0,
 				y: planTop,
 				width: chartWidth,
-				height: plans.length * rowHeight,
+				height: planLaneCount * rowHeight,
 				class: "rg-plan-area",
 			})
 		);
@@ -198,13 +219,13 @@ export function renderGantt(
 	}
 
 	// 行区切りの横線
-	const totalRows = plans.length + model.tasks.length;
+	const totalRows = planLaneCount + model.tasks.length;
 	for (let i = 0; i <= totalRows; i++) {
 		const y = HEADER_HEIGHT + i * rowHeight;
 		root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
 	}
 	// 全体予定とチケットの区切り線
-	if (plans.length > 0) {
+	if (planLaneCount > 0) {
 		root.appendChild(
 			svg("line", { x1: 0, y1: taskTop, x2: chartWidth, y2: taskTop, class: "rg-separator" })
 		);
@@ -225,28 +246,61 @@ export function renderGantt(
 		root.appendChild(t);
 	}
 
-	// 全体予定のバー
-	plans.forEach((plan, i) => {
-		if (!plan.start || !plan.end) return;
-		const span = clipSpan(plan.start, plan.end, range);
-		if (!span) return;
-		const x = diffDays(range.start, span.s) * ppd;
-		const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-		const y = planTop + i * rowHeight + barPadding;
+	// 全体予定: 1日の予定は▼マーカー+タイトル、複数日はタイトル入りブロック
+	for (const plan of datedPlans) {
+		const lane = planLane.get(plan) ?? 0;
+		const y = planTop + lane * rowHeight + barPadding;
 		const h = rowHeight - barPadding * 2;
-		const bar = svg("rect", {
-			x,
-			y,
-			width: w,
-			height: h,
-			rx: 3,
-			class: `rg-plan-bar rg-plan-${plan.status}`,
-		});
+		const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
+		const group = svg("g", {});
 		const title = svg("title");
 		title.textContent = planTooltip(plan);
-		bar.appendChild(title);
-		root.appendChild(bar);
-	});
+		group.appendChild(title);
+
+		if (diffDays(plan.start, plan.end) === 0) {
+			// 1日の予定: ▼マーカーと右側にタイトル
+			if (plan.start < range.start || plan.start > range.end) continue;
+			const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
+			const half = Math.max(5, Math.round(h / 2));
+			group.appendChild(
+				svg("polygon", {
+					points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+					class: `rg-plan-marker rg-plan-${plan.status}`,
+				})
+			);
+			const label = svg("text", {
+				x: cx + half + 4,
+				y: textBaseline,
+				"font-size": opts.fontSize,
+				class: `rg-plan-marker-label rg-plan-${plan.status}`,
+			});
+			label.textContent = plan.name;
+			group.appendChild(label);
+		} else {
+			// 複数日の予定: ブロック内にタイトル
+			const span = clipSpan(plan.start, plan.end, range);
+			if (!span) continue;
+			const x = diffDays(range.start, span.s) * ppd;
+			const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
+			group.appendChild(
+				svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
+			);
+			const maxChars = Math.floor((w - 10) / opts.fontSize);
+			if (maxChars >= 2) {
+				const name =
+					plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "…" : plan.name;
+				const label = svg("text", {
+					x: x + 6,
+					y: textBaseline,
+					"font-size": opts.fontSize,
+					class: "rg-plan-bar-label",
+				});
+				label.textContent = name;
+				group.appendChild(label);
+			}
+		}
+		root.appendChild(group);
+	}
 
 	// タスクバー
 	model.tasks.forEach((task, i) => {

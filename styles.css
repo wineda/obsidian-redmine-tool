@@ -279,6 +279,42 @@
 	color: var(--color-green);
 }
 
+.rg-plan-label {
+	font-weight: 600;
+	color: var(--text-muted);
+}
+
+.rg-plan-marker {
+	fill: var(--text-faint);
+}
+
+.rg-plan-marker.rg-plan-doing {
+	fill: var(--color-orange);
+}
+
+.rg-plan-marker.rg-plan-done {
+	fill: var(--color-green);
+}
+
+.rg-plan-marker-label {
+	font-weight: 600;
+	fill: var(--text-muted);
+}
+
+.rg-plan-marker-label.rg-plan-doing {
+	fill: var(--color-orange);
+}
+
+.rg-plan-marker-label.rg-plan-done {
+	fill: var(--color-green);
+}
+
+.rg-plan-bar-label {
+	fill: #ffffff;
+	font-weight: 600;
+	pointer-events: none;
+}
+
 .rg-plan-bar {
 	fill: var(--text-faint);
 	opacity: 0.75;
