@@ -583,7 +583,8 @@ function weekendBands(range, scale) {
 var ROW_HEIGHT = 30;
 var HEADER_HEIGHT = 40;
 var BAR_PADDING = 7;
-var LEFT_WIDTH = 320;
+var DEFAULT_LEFT_WIDTH = 480;
+var MIN_LEFT_WIDTH = 200;
 var INDENT = 16;
 var SVG_NS = "http://www.w3.org/2000/svg";
 function svg(tag, attrs = {}) {
@@ -602,6 +603,7 @@ function clipSpan(start, end, range) {
   };
 }
 function renderGantt(container, model, plans, scale, range, opts) {
+  var _a;
   container.empty();
   if (model.tasks.length === 0 && model.undated.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
@@ -614,10 +616,30 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const chartHeight = taskTop + model.tasks.length * ROW_HEIGHT;
   const body = container.createDiv({ cls: "rg-body" });
   const left = body.createDiv({ cls: "rg-left" });
-  left.style.width = `${LEFT_WIDTH}px`;
+  left.style.width = `${(_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH}px`;
   const leftHeader = left.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
+  const resizer = left.createDiv({ cls: "rg-left-resizer" });
+  resizer.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = left.getBoundingClientRect().width;
+    const onMove = (ev) => {
+      var _a2;
+      const width = Math.max(MIN_LEFT_WIDTH, startWidth + ev.clientX - startX);
+      left.style.width = `${width}px`;
+      (_a2 = opts.onLeftWidthChange) == null ? void 0 : _a2.call(opts, width);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.removeClass("rg-resizing");
+    };
+    document.body.addClass("rg-resizing");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
   for (const plan of plans) {
     const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
     row.style.height = `${ROW_HEIGHT}px`;
@@ -633,9 +655,15 @@ function renderGantt(container, model, plans, scale, range, opts) {
     const row = left.createDiv({ cls: "rg-left-row" });
     row.style.height = `${ROW_HEIGHT}px`;
     row.style.paddingLeft = `${8 + task.depth * INDENT}px`;
+    row.createEl("a", {
+      cls: "rg-id-link",
+      text: `#${task.id}`,
+      href: opts.issueUrl(task.id)
+    });
+    row.createSpan({ cls: "rg-tracker", text: task.tracker });
     const link = row.createEl("a", {
       cls: "rg-issue-link",
-      text: `#${task.id} ${task.subject}`,
+      text: task.subject,
       href: opts.issueUrl(task.id)
     });
     link.setAttr("title", taskTooltip(task));
@@ -785,8 +813,14 @@ function renderGantt(container, model, plans, scale, range, opts) {
     for (const task of model.undated) {
       const row = undated.createDiv({ cls: "rg-undated-row" });
       row.createEl("a", {
+        cls: "rg-id-link",
+        text: `#${task.id}`,
+        href: opts.issueUrl(task.id)
+      });
+      row.createSpan({ cls: "rg-tracker", text: task.tracker });
+      row.createEl("a", {
         cls: "rg-issue-link",
-        text: `#${task.id} ${task.subject}`,
+        text: task.subject,
         href: opts.issueUrl(task.id)
       });
       if (task.assignee)
@@ -973,6 +1007,7 @@ var GanttView = class extends import_obsidian4.ItemView {
     this.showClosed = false;
     this.selectedAssignees = /* @__PURE__ */ new Set();
     this.tableWidths = defaultTableWidths();
+    this.ganttLeftWidth = DEFAULT_LEFT_WIDTH;
     this.rangeMonths = 2;
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
@@ -1304,7 +1339,11 @@ var GanttView = class extends import_obsidian4.ItemView {
     const client = new RedmineClient(this.plugin.settings);
     const opts = {
       issueUrl: (id) => client.issueUrl(id),
-      assigneeColor: (assignee) => this.assigneeColor(assignee)
+      assigneeColor: (assignee) => this.assigneeColor(assignee),
+      leftWidth: this.ganttLeftWidth,
+      onLeftWidthChange: (width) => {
+        this.ganttLeftWidth = width;
+      }
     };
     if (this.plugin.settings.viewMode === "table") {
       renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });

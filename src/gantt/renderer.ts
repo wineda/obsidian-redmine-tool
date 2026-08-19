@@ -11,7 +11,8 @@ import {
 const ROW_HEIGHT = 30;
 const HEADER_HEIGHT = 40;
 const BAR_PADDING = 7;
-const LEFT_WIDTH = 320;
+export const DEFAULT_LEFT_WIDTH = 480;
+const MIN_LEFT_WIDTH = 200;
 const INDENT = 16;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -39,6 +40,10 @@ export interface RenderOptions {
 	issueUrl: (id: number) => string;
 	/** 担当者絞り込みモード時の色。対象外・モード無効時は null */
 	assigneeColor: (assignee: string) => string | null;
+	/** ガント左ペイン(チケット一覧)の幅(px) */
+	leftWidth?: number;
+	/** 左ペイン幅をドラッグで変更したときに呼ばれる(呼び出し側で保持する) */
+	onLeftWidthChange?: (width: number) => void;
 }
 
 /** 表示範囲でバー期間を切り詰める。範囲外なら null */
@@ -79,10 +84,31 @@ export function renderGantt(
 
 	// ---- 左ペイン: 全体予定+チケット一覧(横スクロール時も固定) ----
 	const left = body.createDiv({ cls: "rg-left" });
-	left.style.width = `${LEFT_WIDTH}px`;
+	left.style.width = `${opts.leftWidth ?? DEFAULT_LEFT_WIDTH}px`;
 	const leftHeader = left.createDiv({ cls: "rg-left-header" });
 	leftHeader.style.height = `${HEADER_HEIGHT}px`;
 	leftHeader.setText("チケット");
+
+	// 左ペイン幅のドラッグリサイズ
+	const resizer = left.createDiv({ cls: "rg-left-resizer" });
+	resizer.addEventListener("mousedown", (e: MouseEvent) => {
+		e.preventDefault();
+		const startX = e.clientX;
+		const startWidth = left.getBoundingClientRect().width;
+		const onMove = (ev: MouseEvent) => {
+			const width = Math.max(MIN_LEFT_WIDTH, startWidth + ev.clientX - startX);
+			left.style.width = `${width}px`;
+			opts.onLeftWidthChange?.(width);
+		};
+		const onUp = () => {
+			document.removeEventListener("mousemove", onMove);
+			document.removeEventListener("mouseup", onUp);
+			document.body.removeClass("rg-resizing");
+		};
+		document.body.addClass("rg-resizing");
+		document.addEventListener("mousemove", onMove);
+		document.addEventListener("mouseup", onUp);
+	});
 
 	for (const plan of plans) {
 		const row = left.createDiv({ cls: "rg-left-row rg-plan-row" });
@@ -100,9 +126,15 @@ export function renderGantt(
 		const row = left.createDiv({ cls: "rg-left-row" });
 		row.style.height = `${ROW_HEIGHT}px`;
 		row.style.paddingLeft = `${8 + task.depth * INDENT}px`;
+		row.createEl("a", {
+			cls: "rg-id-link",
+			text: `#${task.id}`,
+			href: opts.issueUrl(task.id),
+		});
+		row.createSpan({ cls: "rg-tracker", text: task.tracker });
 		const link = row.createEl("a", {
 			cls: "rg-issue-link",
-			text: `#${task.id} ${task.subject}`,
+			text: task.subject,
 			href: opts.issueUrl(task.id),
 		});
 		link.setAttr("title", taskTooltip(task));
@@ -275,8 +307,14 @@ export function renderGantt(
 		for (const task of model.undated) {
 			const row = undated.createDiv({ cls: "rg-undated-row" });
 			row.createEl("a", {
+				cls: "rg-id-link",
+				text: `#${task.id}`,
+				href: opts.issueUrl(task.id),
+			});
+			row.createSpan({ cls: "rg-tracker", text: task.tracker });
+			row.createEl("a", {
 				cls: "rg-issue-link",
-				text: `#${task.id} ${task.subject}`,
+				text: task.subject,
 				href: opts.issueUrl(task.id),
 			});
 			if (task.assignee) row.createSpan({ cls: "rg-assignee", text: task.assignee });

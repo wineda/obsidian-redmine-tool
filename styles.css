@@ -92,6 +92,43 @@
 	text-decoration: line-through;
 }
 
+/* チケット番号のリンク表示 */
+.rg-id-link {
+	flex: 0 0 auto;
+	color: var(--text-accent);
+	text-decoration: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.rg-id-link:hover {
+	text-decoration: underline;
+}
+
+.rg-row-closed .rg-id-link {
+	color: var(--text-faint);
+}
+
+.rg-left-row .rg-tracker,
+.rg-undated-row .rg-tracker {
+	flex: 0 0 auto;
+}
+
+/* 左ペイン幅のドラッグリサイズ */
+.rg-left-resizer {
+	position: absolute;
+	top: 0;
+	right: -4px;
+	width: 8px;
+	height: 100%;
+	cursor: col-resize;
+	z-index: 3;
+}
+
+.rg-left-resizer:hover {
+	background: var(--interactive-accent);
+	opacity: 0.4;
+}
+
 .rg-assignee {
 	flex: 0 0 auto;
 	margin-left: auto;
@@ -409,7 +446,16 @@
 }
 
 .rg-table .rg-td-id .rg-issue-link {
-	color: var(--text-muted);
+	color: var(--text-accent);
+	font-variant-numeric: tabular-nums;
+}
+
+.rg-table .rg-td-id .rg-issue-link:hover {
+	text-decoration: underline;
+}
+
+.rg-table .rg-row-closed .rg-td-id .rg-issue-link {
+	color: var(--text-faint);
 }
 
 .rg-table .rg-issue-link:hover {

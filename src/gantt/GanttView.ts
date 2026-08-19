@@ -5,7 +5,7 @@ import { buildGanttModel, GanttModel } from "../redmine/mapper";
 import type { RedmineIssue } from "../redmine/types";
 import type { GanttFilter, GanttScale, PlanItem, ViewMode } from "../settings";
 import { PlanModal } from "../plan/PlanModal";
-import { PlanRow, renderGantt } from "./renderer";
+import { DEFAULT_LEFT_WIDTH, PlanRow, renderGantt } from "./renderer";
 import { TimeRange, monthRange } from "./scale";
 import { defaultTableWidths, renderTable } from "./table";
 
@@ -52,6 +52,7 @@ export class GanttView extends ItemView {
 	private showClosed = false;
 	private selectedAssignees = new Set<string>();
 	private tableWidths: number[] = defaultTableWidths();
+	private ganttLeftWidth = DEFAULT_LEFT_WIDTH;
 
 	// ガントの表示期間(既定: 当月から2ヶ月)
 	private rangeYear: number;
@@ -418,6 +419,10 @@ export class GanttView extends ItemView {
 		const opts = {
 			issueUrl: (id: number) => client.issueUrl(id),
 			assigneeColor: (assignee: string) => this.assigneeColor(assignee),
+			leftWidth: this.ganttLeftWidth,
+			onLeftWidthChange: (width: number) => {
+				this.ganttLeftWidth = width;
+			},
 		};
 		if (this.plugin.settings.viewMode === "table") {
 			renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
