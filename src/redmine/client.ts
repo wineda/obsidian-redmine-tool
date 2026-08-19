@@ -137,7 +137,7 @@ export class RedmineClient {
 	 * 親チケット配下のツリー全体を取得する。
 	 * parent_id の「~」演算子(指定チケットの全子孫を再帰的に返す)で一括取得し、
 	 * 対応していないRedmineでは1親ずつ辿るBFSにフォールバックする。
-	 * 途中の親が完了済みでも配下が途切れないよう取得は全ステータスで行い、最後に絞り込む。
+	 * 完了チケットの表示/非表示はビュー側で切り替えるため、取得は常に全ステータスで行う。
 	 */
 	private async fetchSubtreeIssues(value: string): Promise<RedmineIssue[]> {
 		const rootId = Number(value.trim());
@@ -169,11 +169,6 @@ export class RedmineClient {
 				seen.add(issue.id);
 				result.push(issue);
 			}
-		}
-
-		if (!this.settings.includeClosed) {
-			// ルートは表示の起点なので残す
-			return result.filter((issue) => issue.id === rootId || !issue.closed_on);
 		}
 		return result;
 	}

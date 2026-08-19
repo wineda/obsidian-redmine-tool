@@ -37,6 +37,8 @@ export interface PlanRow {
 
 export interface RenderOptions {
 	issueUrl: (id: number) => string;
+	/** 担当者絞り込みモード時の色。対象外・モード無効時は null */
+	assigneeColor: (assignee: string) => string | null;
 }
 
 export function renderGantt(
@@ -96,7 +98,12 @@ export function renderGantt(
 		link.setAttr("title", taskTooltip(task));
 		if (task.isClosed) row.addClass("rg-row-closed");
 		if (task.assignee) {
-			row.createSpan({ cls: "rg-assignee", text: task.assignee });
+			const assignee = row.createSpan({ cls: "rg-assignee", text: task.assignee });
+			const color = opts.assigneeColor(task.assignee);
+			if (color) {
+				assignee.style.color = color;
+				assignee.style.fontWeight = "600";
+			}
 		}
 	}
 
@@ -202,11 +209,14 @@ export function renderGantt(
 
 		const group = svg("g", { class: "rg-bar-group" });
 
+		const assigneeColor = task.assignee ? opts.assigneeColor(task.assignee) : null;
+
 		const barClass =
 			"rg-bar" +
 			(task.isClosed ? " rg-bar-closed" : "") +
 			(task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
 		const bar = svg("rect", { x, y, width: w, height: h, rx: 3, class: barClass });
+		if (assigneeColor && !task.isClosed) bar.style.fill = assigneeColor;
 		const title = svg("title");
 		title.textContent = taskTooltip(task);
 		bar.appendChild(title);
@@ -214,16 +224,16 @@ export function renderGantt(
 
 		// 進捗率の塗り
 		if (task.doneRatio > 0) {
-			group.appendChild(
-				svg("rect", {
-					x,
-					y,
-					width: (w * Math.min(task.doneRatio, 100)) / 100,
-					height: h,
-					rx: 3,
-					class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : ""),
-				})
-			);
+			const progress = svg("rect", {
+				x,
+				y,
+				width: (w * Math.min(task.doneRatio, 100)) / 100,
+				height: h,
+				rx: 3,
+				class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : ""),
+			});
+			if (assigneeColor && !task.isClosed) progress.style.fill = assigneeColor;
+			group.appendChild(progress);
 		}
 
 		group.addEventListener("click", () => {

@@ -5,6 +5,12 @@ export interface RedmineNamedRef {
 	name: string;
 }
 
+export interface RedmineCustomField {
+	id: number;
+	name: string;
+	value: string | string[] | null;
+}
+
 export interface RedmineIssue {
 	id: number;
 	subject: string;
@@ -19,6 +25,7 @@ export interface RedmineIssue {
 	start_date?: string; // "YYYY-MM-DD"
 	due_date?: string; // "YYYY-MM-DD"
 	done_ratio: number; // 0-100
+	custom_fields?: RedmineCustomField[];
 	created_on: string; // ISO 8601
 	updated_on: string; // ISO 8601 — 将来の更新対応(楽観ロック)で使用
 	closed_on?: string;

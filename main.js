@@ -39,7 +39,6 @@ var PLAN_STATUS_LABELS = {
 var DEFAULT_SETTINGS = {
   baseUrl: "",
   apiKey: "",
-  includeClosed: false,
   defaultScale: "week",
   filters: [],
   activeFilter: "",
@@ -69,12 +68,6 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian.Setting(containerEl).setName("\u5B8C\u4E86\u30C1\u30B1\u30C3\u30C8\u3092\u542B\u3081\u308B").setDesc("\u30AA\u30F3\u306B\u3059\u308B\u3068\u7D42\u4E86\u30B9\u30C6\u30FC\u30BF\u30B9\u306E\u30C1\u30B1\u30C3\u30C8\u3082\u8868\u793A\u3057\u307E\u3059\u3002").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.includeClosed).onChange(async (value) => {
-        this.plugin.settings.includeClosed = value;
-        await this.plugin.saveSettings();
-      })
-    );
     new import_obsidian.Setting(containerEl).setName("\u65E2\u5B9A\u306E\u30B9\u30B1\u30FC\u30EB").setDesc("\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u3092\u958B\u3044\u305F\u3068\u304D\u306E\u6642\u9593\u8EF8\u30B9\u30B1\u30FC\u30EB\u3002").addDropdown(
       (dropdown) => dropdown.addOption("day", "\u65E5").addOption("week", "\u9031").addOption("month", "\u6708").setValue(this.plugin.settings.defaultScale).onChange(async (value) => {
         this.plugin.settings.defaultScale = value;
@@ -238,7 +231,7 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
    * 親チケット配下のツリー全体を取得する。
    * parent_id の「~」演算子(指定チケットの全子孫を再帰的に返す)で一括取得し、
    * 対応していないRedmineでは1親ずつ辿るBFSにフォールバックする。
-   * 途中の親が完了済みでも配下が途切れないよう取得は全ステータスで行い、最後に絞り込む。
+   * 完了チケットの表示/非表示はビュー側で切り替えるため、取得は常に全ステータスで行う。
    */
   async fetchSubtreeIssues(value) {
     const rootId = Number(value.trim());
@@ -267,9 +260,6 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
         seen.add(issue.id);
         result.push(issue);
       }
-    }
-    if (!this.settings.includeClosed) {
-      return result.filter((issue) => issue.id === rootId || !issue.closed_on);
     }
     return result;
   }
@@ -312,12 +302,13 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
 };
 
 // src/redmine/mapper.ts
+var DELIVERY_FIELD_NAME = "\u7D0D\u671F";
 function parseDate(s) {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
 function toTask(issue) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d, _e, _f, _g;
   let start = null;
   let due = null;
   let startIsFallback = false;
@@ -339,17 +330,19 @@ function toTask(issue) {
     due = start;
     dueIsFallback = true;
   }
+  const deliveryValue = (_b = (_a = issue.custom_fields) == null ? void 0 : _a.find((f) => f.name === DELIVERY_FIELD_NAME)) == null ? void 0 : _b.value;
   return {
     id: issue.id,
     subject: issue.subject,
     start,
     due,
-    doneRatio: (_a = issue.done_ratio) != null ? _a : 0,
-    assignee: (_c = (_b = issue.assigned_to) == null ? void 0 : _b.name) != null ? _c : "",
+    doneRatio: (_c = issue.done_ratio) != null ? _c : 0,
+    assignee: (_e = (_d = issue.assigned_to) == null ? void 0 : _d.name) != null ? _e : "",
     status: issue.status.name,
     tracker: issue.tracker.name,
     project: issue.project.name,
-    parentId: (_e = (_d = issue.parent) == null ? void 0 : _d.id) != null ? _e : null,
+    delivery: Array.isArray(deliveryValue) ? deliveryValue.join(", ") : deliveryValue != null ? deliveryValue : "",
+    parentId: (_g = (_f = issue.parent) == null ? void 0 : _f.id) != null ? _g : null,
     depth: 0,
     startIsFallback,
     dueIsFallback,
@@ -591,7 +584,12 @@ function renderGantt(container, model, plans, scale, opts) {
     if (task.isClosed)
       row.addClass("rg-row-closed");
     if (task.assignee) {
-      row.createSpan({ cls: "rg-assignee", text: task.assignee });
+      const assignee = row.createSpan({ cls: "rg-assignee", text: task.assignee });
+      const color = opts.assigneeColor(task.assignee);
+      if (color) {
+        assignee.style.color = color;
+        assignee.style.fontWeight = "600";
+      }
     }
   }
   const chart = body.createDiv({ cls: "rg-chart" });
@@ -680,23 +678,27 @@ function renderGantt(container, model, plans, scale, opts) {
     const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
     const h = ROW_HEIGHT - BAR_PADDING * 2;
     const group = svg("g", { class: "rg-bar-group" });
+    const assigneeColor = task.assignee ? opts.assigneeColor(task.assignee) : null;
     const barClass = "rg-bar" + (task.isClosed ? " rg-bar-closed" : "") + (task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
     const bar = svg("rect", { x, y, width: w, height: h, rx: 3, class: barClass });
+    if (assigneeColor && !task.isClosed)
+      bar.style.fill = assigneeColor;
     const title = svg("title");
     title.textContent = taskTooltip(task);
     bar.appendChild(title);
     group.appendChild(bar);
     if (task.doneRatio > 0) {
-      group.appendChild(
-        svg("rect", {
-          x,
-          y,
-          width: w * Math.min(task.doneRatio, 100) / 100,
-          height: h,
-          rx: 3,
-          class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : "")
-        })
-      );
+      const progress = svg("rect", {
+        x,
+        y,
+        width: w * Math.min(task.doneRatio, 100) / 100,
+        height: h,
+        rx: 3,
+        class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : "")
+      });
+      if (assigneeColor && !task.isClosed)
+        progress.style.fill = assigneeColor;
+      group.appendChild(progress);
     }
     group.addEventListener("click", () => {
       window.open(opts.issueUrl(task.id));
@@ -753,6 +755,21 @@ function planTooltip(plan) {
 
 // src/gantt/table.ts
 var INDENT2 = 16;
+var MIN_COL_WIDTH = 48;
+var COLUMNS = [
+  { label: "#", width: 72 },
+  { label: "\u30C8\u30E9\u30C3\u30AB\u30FC", width: 100 },
+  { label: "\u984C\u540D", width: 360 },
+  { label: "\u30B9\u30C6\u30FC\u30BF\u30B9", width: 120 },
+  { label: "\u62C5\u5F53\u8005", width: 110 },
+  { label: "\u958B\u59CB\u65E5", width: 96, cls: "rg-td-date" },
+  { label: "\u671F\u65E5", width: 96, cls: "rg-td-date" },
+  { label: "\u7D0D\u671F", width: 96, cls: "rg-td-date" },
+  { label: "\u9032\u6357", width: 96 }
+];
+function defaultTableWidths() {
+  return COLUMNS.map((c) => c.width);
+}
 function renderTable(container, model, opts) {
   container.empty();
   const all = [...model.tasks, ...model.undated];
@@ -762,45 +779,110 @@ function renderTable(container, model, opts) {
   }
   const wrap = container.createDiv({ cls: "rg-table-wrap" });
   const table = wrap.createEl("table", { cls: "rg-table" });
+  const colgroup = table.createEl("colgroup");
+  const cols = COLUMNS.map((_, i) => {
+    const col = colgroup.createEl("col");
+    col.style.width = `${opts.widths[i]}px`;
+    return col;
+  });
   const thead = table.createEl("thead");
   const headRow = thead.createEl("tr");
-  for (const label of ["#", "\u984C\u540D", "\u30B9\u30C6\u30FC\u30BF\u30B9", "\u62C5\u5F53\u8005", "\u958B\u59CB\u65E5", "\u671F\u65E5", "\u9032\u6357"]) {
-    headRow.createEl("th", { text: label });
-  }
+  COLUMNS.forEach((column, i) => {
+    const th = headRow.createEl("th", { text: column.label });
+    const resizer = th.createDiv({ cls: "rg-col-resizer" });
+    resizer.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = opts.widths[i];
+      const onMove = (ev) => {
+        opts.widths[i] = Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX);
+        cols[i].style.width = `${opts.widths[i]}px`;
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.removeClass("rg-resizing");
+      };
+      document.body.addClass("rg-resizing");
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
   const tbody = table.createEl("tbody");
   for (const task of all) {
-    const row = tbody.createEl("tr");
-    if (task.isClosed)
-      row.addClass("rg-row-closed");
-    const idCell = row.createEl("td", { cls: "rg-td-id" });
-    idCell.createEl("a", {
-      cls: "rg-issue-link",
-      text: `#${task.id}`,
-      href: opts.issueUrl(task.id)
-    });
-    const subjectCell = row.createEl("td", { cls: "rg-td-subject" });
-    subjectCell.style.paddingLeft = `${8 + task.depth * INDENT2}px`;
-    subjectCell.createEl("a", {
-      cls: "rg-issue-link",
-      text: task.subject,
-      href: opts.issueUrl(task.id)
-    });
-    row.createEl("td", { text: task.status });
-    row.createEl("td", { text: task.assignee || "-" });
-    row.createEl("td", {
-      cls: "rg-td-date",
-      text: task.start && !task.startIsFallback ? formatDate(task.start) : "-"
-    });
-    row.createEl("td", {
-      cls: "rg-td-date",
-      text: task.due && !task.dueIsFallback ? formatDate(task.due) : "-"
-    });
-    row.createEl("td", { cls: "rg-td-ratio", text: `${task.doneRatio}%` });
+    renderRow(tbody, task, opts);
   }
+}
+function renderRow(tbody, task, opts) {
+  const row = tbody.createEl("tr");
+  if (task.isClosed)
+    row.addClass("rg-row-closed");
+  const idCell = row.createEl("td", { cls: "rg-td-id" });
+  idCell.createEl("a", {
+    cls: "rg-issue-link",
+    text: `#${task.id}`,
+    href: opts.issueUrl(task.id)
+  });
+  const trackerCell = row.createEl("td");
+  trackerCell.createSpan({ cls: "rg-tracker", text: task.tracker });
+  const subjectCell = row.createEl("td", { cls: "rg-td-subject" });
+  subjectCell.style.paddingLeft = `${10 + task.depth * INDENT2}px`;
+  const link = subjectCell.createEl("a", {
+    cls: "rg-issue-link",
+    text: task.subject,
+    href: opts.issueUrl(task.id)
+  });
+  link.setAttr("title", task.subject);
+  const statusCell = row.createEl("td");
+  statusCell.createSpan({
+    cls: "rg-badge" + (task.isClosed ? " rg-badge-closed" : ""),
+    text: task.status
+  });
+  const assigneeCell = row.createEl("td");
+  if (task.assignee) {
+    const chip = assigneeCell.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+    const color = opts.assigneeColor(task.assignee);
+    if (color) {
+      chip.style.backgroundColor = color;
+      chip.addClass("rg-assignee-chip-colored");
+    }
+  } else {
+    assigneeCell.setText("-");
+    assigneeCell.addClass("rg-td-empty");
+  }
+  row.createEl("td", {
+    cls: "rg-td-date",
+    text: task.start && !task.startIsFallback ? formatDate(task.start) : "-"
+  });
+  row.createEl("td", {
+    cls: "rg-td-date",
+    text: task.due && !task.dueIsFallback ? formatDate(task.due) : "-"
+  });
+  row.createEl("td", { cls: "rg-td-date", text: task.delivery || "-" });
+  const ratioCell = row.createEl("td", { cls: "rg-td-ratio" });
+  const ratioWrap = ratioCell.createDiv({ cls: "rg-ratio-wrap" });
+  const bar = ratioWrap.createDiv({ cls: "rg-progress" });
+  const fill = bar.createDiv({ cls: "rg-progress-fill" });
+  fill.style.width = `${Math.min(task.doneRatio, 100)}%`;
+  if (task.doneRatio >= 100)
+    fill.addClass("rg-progress-done");
+  ratioWrap.createSpan({ cls: "rg-progress-text", text: `${task.doneRatio}%` });
 }
 
 // src/gantt/GanttView.ts
 var VIEW_TYPE_REDMINE_GANTT = "redmine-gantt-view";
+var ASSIGNEE_PALETTE = [
+  "#3f7fd9",
+  "#d94f70",
+  "#3f9e4d",
+  "#e8883a",
+  "#7a5fd0",
+  "#2f9e9b",
+  "#b0578d",
+  "#98771d"
+];
+var NO_ASSIGNEE = "";
+var NO_ASSIGNEE_LABEL = "(\u62C5\u5F53\u8005\u306A\u3057)";
 function parsePlanDate(s) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s))
     return null;
@@ -810,11 +892,18 @@ function parsePlanDate(s) {
 var GanttView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
-    this.model = null;
+    this.rawIssues = null;
     this.statusEl = null;
     this.chartEl = null;
     this.scaleSelect = null;
+    this.assigneePanel = null;
+    this.assigneeBtn = null;
     this.loading = false;
+    this.lastFetchedAt = null;
+    // 表示側のフィルタ状態(セッション内のみ保持)
+    this.showClosed = false;
+    this.selectedAssignees = /* @__PURE__ */ new Set();
+    this.tableWidths = defaultTableWidths();
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
   }
@@ -849,7 +938,7 @@ var GanttView = class extends import_obsidian4.ItemView {
       this.plugin.settings.viewMode = modeSelect.value;
       void this.plugin.saveSettings();
       this.updateScaleVisibility();
-      this.renderChart();
+      this.renderView();
     });
     const filterSelect = toolbar.createEl("select", { cls: "dropdown rg-filter-select" });
     const namedFilters = this.plugin.settings.filters.filter((f) => f.name);
@@ -871,6 +960,7 @@ var GanttView = class extends import_obsidian4.ItemView {
     filterSelect.addEventListener("change", () => {
       this.plugin.settings.activeFilter = filterSelect.value;
       void this.plugin.saveSettings();
+      this.selectedAssignees.clear();
       void this.refresh();
     });
     this.scaleSelect = toolbar.createEl("select", { cls: "dropdown rg-scale-select" });
@@ -885,8 +975,20 @@ var GanttView = class extends import_obsidian4.ItemView {
     this.scaleSelect.value = this.scale;
     this.scaleSelect.addEventListener("change", () => {
       this.scale = this.scaleSelect.value;
-      this.renderChart();
+      this.renderView();
     });
+    const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
+    const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
+    closedLabel.appendText("\u5B8C\u4E86");
+    closedCheckbox.checked = this.showClosed;
+    closedCheckbox.addEventListener("change", () => {
+      this.showClosed = closedCheckbox.checked;
+      this.renderView();
+    });
+    this.assigneeBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
+    (0, import_obsidian4.setIcon)(this.assigneeBtn, "users");
+    this.assigneeBtn.setAttr("aria-label", "\u62C5\u5F53\u8005\u3067\u7D5E\u308A\u8FBC\u307F");
+    this.assigneeBtn.addEventListener("click", () => this.toggleAssigneePanel());
     const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
     (0, import_obsidian4.setIcon)(planBtn, "calendar-range");
     planBtn.setAttr("aria-label", "\u5168\u4F53\u4E88\u5B9A\u3092\u7DE8\u96C6");
@@ -894,10 +996,19 @@ var GanttView = class extends import_obsidian4.ItemView {
       new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
         this.plugin.settings.planItems = items;
         void this.plugin.saveSettings();
-        this.renderChart();
+        this.renderView();
       }).open();
     });
     this.statusEl = toolbar.createDiv({ cls: "rg-status" });
+    this.assigneePanel = toolbar.createDiv({ cls: "rg-assignee-panel" });
+    this.assigneePanel.hide();
+    this.registerDomEvent(document, "mousedown", (e) => {
+      var _a;
+      const target = e.target;
+      if (this.assigneePanel && this.assigneePanel.isShown() && !this.assigneePanel.contains(target) && !((_a = this.assigneeBtn) == null ? void 0 : _a.contains(target))) {
+        this.assigneePanel.hide();
+      }
+    });
     this.chartEl = container.createDiv({ cls: "rg-chart-container" });
     this.updateScaleVisibility();
     await this.refresh();
@@ -920,7 +1031,7 @@ var GanttView = class extends import_obsidian4.ItemView {
       return;
     const filter = this.activeFilter();
     if (!filter) {
-      this.model = null;
+      this.rawIssues = null;
       this.setStatus("\u30D5\u30A3\u30EB\u30BF\u672A\u8A2D\u5B9A");
       this.chartEl.empty();
       this.chartEl.createDiv({
@@ -933,13 +1044,12 @@ var GanttView = class extends import_obsidian4.ItemView {
     this.setStatus("\u53D6\u5F97\u4E2D\u2026");
     try {
       const client = new RedmineClient(this.plugin.settings);
-      const issues = await client.fetchIssues(filter);
-      this.model = buildGanttModel(issues);
-      this.renderChart();
+      this.rawIssues = await client.fetchIssues(filter);
       const now = /* @__PURE__ */ new Date();
       const hh = String(now.getHours()).padStart(2, "0");
       const mm = String(now.getMinutes()).padStart(2, "0");
-      this.setStatus(`${issues.length}\u4EF6 / \u6700\u7D42\u66F4\u65B0 ${hh}:${mm}`);
+      this.lastFetchedAt = `${hh}:${mm}`;
+      this.renderView();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.setStatus("\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F");
@@ -949,6 +1059,99 @@ var GanttView = class extends import_obsidian4.ItemView {
     } finally {
       this.loading = false;
     }
+  }
+  /** 表示側フィルタ(完了・担当者)を適用したチケット群 */
+  visibleIssues() {
+    if (!this.rawIssues)
+      return [];
+    const filter = this.activeFilter();
+    const rootId = (filter == null ? void 0 : filter.type) === "parent" ? Number(filter.value.trim()) : NaN;
+    let issues = this.rawIssues;
+    if (!this.showClosed) {
+      issues = issues.filter((issue) => !issue.closed_on || issue.id === rootId);
+    }
+    if (this.selectedAssignees.size > 0) {
+      issues = issues.filter(
+        (issue) => {
+          var _a, _b;
+          return this.selectedAssignees.has((_b = (_a = issue.assigned_to) == null ? void 0 : _a.name) != null ? _b : NO_ASSIGNEE);
+        }
+      );
+    }
+    return issues;
+  }
+  /** 担当者絞り込みモード時の担当者→色。モード無効・対象外は null */
+  assigneeColor(assignee) {
+    if (this.selectedAssignees.size === 0)
+      return null;
+    const sorted = Array.from(this.selectedAssignees).sort();
+    const index = sorted.indexOf(assignee);
+    if (index < 0)
+      return null;
+    return ASSIGNEE_PALETTE[index % ASSIGNEE_PALETTE.length];
+  }
+  toggleAssigneePanel() {
+    if (!this.assigneePanel || !this.assigneeBtn)
+      return;
+    if (this.assigneePanel.isShown()) {
+      this.assigneePanel.hide();
+      return;
+    }
+    this.renderAssigneePanel();
+    this.assigneePanel.style.left = `${this.assigneeBtn.offsetLeft}px`;
+    this.assigneePanel.show();
+  }
+  renderAssigneePanel() {
+    var _a, _b, _c;
+    const panel = this.assigneePanel;
+    if (!panel)
+      return;
+    panel.empty();
+    panel.createDiv({ cls: "rg-assignee-panel-title", text: "\u62C5\u5F53\u8005\u3067\u7D5E\u308A\u8FBC\u307F" });
+    if (!this.rawIssues || this.rawIssues.length === 0) {
+      panel.createDiv({ cls: "rg-assignee-empty", text: "\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093" });
+      return;
+    }
+    const counts = /* @__PURE__ */ new Map();
+    for (const issue of this.rawIssues) {
+      const name = (_b = (_a = issue.assigned_to) == null ? void 0 : _a.name) != null ? _b : NO_ASSIGNEE;
+      counts.set(name, ((_c = counts.get(name)) != null ? _c : 0) + 1);
+    }
+    const names = Array.from(counts.keys()).sort((a, b) => {
+      if (a === NO_ASSIGNEE)
+        return 1;
+      if (b === NO_ASSIGNEE)
+        return -1;
+      return a.localeCompare(b, "ja");
+    });
+    for (const name of names) {
+      const item = panel.createEl("label", { cls: "rg-assignee-item" });
+      const checkbox = item.createEl("input", { type: "checkbox" });
+      checkbox.checked = this.selectedAssignees.has(name);
+      const dot = item.createSpan({ cls: "rg-assignee-dot" });
+      const color = this.assigneeColor(name);
+      if (color)
+        dot.style.backgroundColor = color;
+      item.createSpan({ text: name === NO_ASSIGNEE ? NO_ASSIGNEE_LABEL : name });
+      item.createSpan({ cls: "rg-assignee-count", text: String(counts.get(name)) });
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) {
+          this.selectedAssignees.add(name);
+        } else {
+          this.selectedAssignees.delete(name);
+        }
+        this.renderAssigneePanel();
+        this.renderView();
+      });
+    }
+    const footer = panel.createDiv({ cls: "rg-assignee-footer" });
+    const clearBtn = footer.createEl("button", { text: "\u9078\u629E\u89E3\u9664" });
+    clearBtn.disabled = this.selectedAssignees.size === 0;
+    clearBtn.addEventListener("click", () => {
+      this.selectedAssignees.clear();
+      this.renderAssigneePanel();
+      this.renderView();
+    });
   }
   /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
   planRows() {
@@ -971,16 +1174,24 @@ var GanttView = class extends import_obsidian4.ItemView {
       return a.start.getTime() - b.start.getTime();
     });
   }
-  renderChart() {
-    if (!this.chartEl || !this.model)
+  /** 表示側フィルタを適用して再描画する(再取得はしない) */
+  renderView() {
+    if (!this.chartEl || !this.rawIssues)
       return;
+    const visible = this.visibleIssues();
+    const model = buildGanttModel(visible);
     const client = new RedmineClient(this.plugin.settings);
-    const opts = { issueUrl: (id) => client.issueUrl(id) };
+    const opts = {
+      issueUrl: (id) => client.issueUrl(id),
+      assigneeColor: (assignee) => this.assigneeColor(assignee)
+    };
     if (this.plugin.settings.viewMode === "table") {
-      renderTable(this.chartEl, this.model, opts);
+      renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
     } else {
-      renderGantt(this.chartEl, this.model, this.planRows(), this.scale, opts);
+      renderGantt(this.chartEl, model, this.planRows(), this.scale, opts);
     }
+    const suffix = this.lastFetchedAt ? ` / \u6700\u7D42\u66F4\u65B0 ${this.lastFetchedAt}` : "";
+    this.setStatus(`\u8868\u793A ${visible.length} / \u53D6\u5F97 ${this.rawIssues.length}\u4EF6${suffix}`);
   }
   setStatus(text) {
     var _a;

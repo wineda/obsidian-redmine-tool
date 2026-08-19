@@ -2,12 +2,29 @@ import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type RedmineGanttPlugin from "../main";
 import { RedmineClient } from "../redmine/client";
 import { buildGanttModel, GanttModel } from "../redmine/mapper";
+import type { RedmineIssue } from "../redmine/types";
 import type { GanttFilter, GanttScale, PlanItem, ViewMode } from "../settings";
 import { PlanModal } from "../plan/PlanModal";
 import { PlanRow, renderGantt } from "./renderer";
-import { renderTable } from "./table";
+import { defaultTableWidths, renderTable } from "./table";
 
 export const VIEW_TYPE_REDMINE_GANTT = "redmine-gantt-view";
+
+/** 担当者絞り込みモードの配色(ライト/ダーク両テーマで判別しやすい中間トーン) */
+const ASSIGNEE_PALETTE = [
+	"#3f7fd9",
+	"#d94f70",
+	"#3f9e4d",
+	"#e8883a",
+	"#7a5fd0",
+	"#2f9e9b",
+	"#b0578d",
+	"#98771d",
+];
+
+/** 担当者なしを表す内部キー(GanttTask.assignee の空文字と対応) */
+const NO_ASSIGNEE = "";
+const NO_ASSIGNEE_LABEL = "(担当者なし)";
 
 /** "YYYY-MM-DD" をローカルタイムの日付として解釈する。空文字は null */
 function parsePlanDate(s: string): Date | null {
@@ -19,11 +36,19 @@ function parsePlanDate(s: string): Date | null {
 export class GanttView extends ItemView {
 	private plugin: RedmineGanttPlugin;
 	private scale: GanttScale;
-	private model: GanttModel | null = null;
+	private rawIssues: RedmineIssue[] | null = null;
 	private statusEl: HTMLElement | null = null;
 	private chartEl: HTMLElement | null = null;
 	private scaleSelect: HTMLSelectElement | null = null;
+	private assigneePanel: HTMLElement | null = null;
+	private assigneeBtn: HTMLElement | null = null;
 	private loading = false;
+	private lastFetchedAt: string | null = null;
+
+	// 表示側のフィルタ状態(セッション内のみ保持)
+	private showClosed = false;
+	private selectedAssignees = new Set<string>();
+	private tableWidths: number[] = defaultTableWidths();
 
 	constructor(leaf: WorkspaceLeaf, plugin: RedmineGanttPlugin) {
 		super(leaf);
@@ -69,7 +94,7 @@ export class GanttView extends ItemView {
 			this.plugin.settings.viewMode = modeSelect.value as ViewMode;
 			void this.plugin.saveSettings();
 			this.updateScaleVisibility();
-			this.renderChart();
+			this.renderView();
 		});
 
 		const filterSelect = toolbar.createEl("select", { cls: "dropdown rg-filter-select" });
@@ -93,6 +118,7 @@ export class GanttView extends ItemView {
 		filterSelect.addEventListener("change", () => {
 			this.plugin.settings.activeFilter = filterSelect.value;
 			void this.plugin.saveSettings();
+			this.selectedAssignees.clear();
 			void this.refresh();
 		});
 
@@ -108,8 +134,24 @@ export class GanttView extends ItemView {
 		this.scaleSelect.value = this.scale;
 		this.scaleSelect.addEventListener("change", () => {
 			this.scale = this.scaleSelect!.value as GanttScale;
-			this.renderChart();
+			this.renderView();
 		});
+
+		// 完了チケットの表示切替(既定: 非表示)
+		const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
+		const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
+		closedLabel.appendText("完了");
+		closedCheckbox.checked = this.showClosed;
+		closedCheckbox.addEventListener("change", () => {
+			this.showClosed = closedCheckbox.checked;
+			this.renderView();
+		});
+
+		// 担当者絞り込み
+		this.assigneeBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
+		setIcon(this.assigneeBtn, "users");
+		this.assigneeBtn.setAttr("aria-label", "担当者で絞り込み");
+		this.assigneeBtn.addEventListener("click", () => this.toggleAssigneePanel());
 
 		// 全体予定の編集
 		const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
@@ -119,11 +161,26 @@ export class GanttView extends ItemView {
 			new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
 				this.plugin.settings.planItems = items;
 				void this.plugin.saveSettings();
-				this.renderChart();
+				this.renderView();
 			}).open();
 		});
 
 		this.statusEl = toolbar.createDiv({ cls: "rg-status" });
+
+		this.assigneePanel = toolbar.createDiv({ cls: "rg-assignee-panel" });
+		this.assigneePanel.hide();
+		this.registerDomEvent(document, "mousedown", (e: MouseEvent) => {
+			const target = e.target as Node;
+			if (
+				this.assigneePanel &&
+				this.assigneePanel.isShown() &&
+				!this.assigneePanel.contains(target) &&
+				!this.assigneeBtn?.contains(target)
+			) {
+				this.assigneePanel.hide();
+			}
+		});
+
 		this.chartEl = container.createDiv({ cls: "rg-chart-container" });
 		this.updateScaleVisibility();
 
@@ -147,7 +204,7 @@ export class GanttView extends ItemView {
 		if (this.loading || !this.chartEl) return;
 		const filter = this.activeFilter();
 		if (!filter) {
-			this.model = null;
+			this.rawIssues = null;
 			this.setStatus("フィルタ未設定");
 			this.chartEl.empty();
 			this.chartEl.createDiv({
@@ -163,13 +220,12 @@ export class GanttView extends ItemView {
 		this.setStatus("取得中…");
 		try {
 			const client = new RedmineClient(this.plugin.settings);
-			const issues = await client.fetchIssues(filter);
-			this.model = buildGanttModel(issues);
-			this.renderChart();
+			this.rawIssues = await client.fetchIssues(filter);
 			const now = new Date();
 			const hh = String(now.getHours()).padStart(2, "0");
 			const mm = String(now.getMinutes()).padStart(2, "0");
-			this.setStatus(`${issues.length}件 / 最終更新 ${hh}:${mm}`);
+			this.lastFetchedAt = `${hh}:${mm}`;
+			this.renderView();
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			this.setStatus("取得に失敗しました");
@@ -179,6 +235,97 @@ export class GanttView extends ItemView {
 		} finally {
 			this.loading = false;
 		}
+	}
+
+	/** 表示側フィルタ(完了・担当者)を適用したチケット群 */
+	private visibleIssues(): RedmineIssue[] {
+		if (!this.rawIssues) return [];
+		const filter = this.activeFilter();
+		const rootId = filter?.type === "parent" ? Number(filter.value.trim()) : NaN;
+		let issues = this.rawIssues;
+		if (!this.showClosed) {
+			// 親チケット配下フィルタのルートは表示の起点なので残す
+			issues = issues.filter((issue) => !issue.closed_on || issue.id === rootId);
+		}
+		if (this.selectedAssignees.size > 0) {
+			issues = issues.filter((issue) =>
+				this.selectedAssignees.has(issue.assigned_to?.name ?? NO_ASSIGNEE)
+			);
+		}
+		return issues;
+	}
+
+	/** 担当者絞り込みモード時の担当者→色。モード無効・対象外は null */
+	private assigneeColor(assignee: string): string | null {
+		if (this.selectedAssignees.size === 0) return null;
+		const sorted = Array.from(this.selectedAssignees).sort();
+		const index = sorted.indexOf(assignee);
+		if (index < 0) return null;
+		return ASSIGNEE_PALETTE[index % ASSIGNEE_PALETTE.length];
+	}
+
+	private toggleAssigneePanel(): void {
+		if (!this.assigneePanel || !this.assigneeBtn) return;
+		if (this.assigneePanel.isShown()) {
+			this.assigneePanel.hide();
+			return;
+		}
+		this.renderAssigneePanel();
+		this.assigneePanel.style.left = `${this.assigneeBtn.offsetLeft}px`;
+		this.assigneePanel.show();
+	}
+
+	private renderAssigneePanel(): void {
+		const panel = this.assigneePanel;
+		if (!panel) return;
+		panel.empty();
+		panel.createDiv({ cls: "rg-assignee-panel-title", text: "担当者で絞り込み" });
+
+		if (!this.rawIssues || this.rawIssues.length === 0) {
+			panel.createDiv({ cls: "rg-assignee-empty", text: "チケットがありません" });
+			return;
+		}
+
+		// 取得済みチケットから担当者一覧(件数付き)を作る
+		const counts = new Map<string, number>();
+		for (const issue of this.rawIssues) {
+			const name = issue.assigned_to?.name ?? NO_ASSIGNEE;
+			counts.set(name, (counts.get(name) ?? 0) + 1);
+		}
+		const names = Array.from(counts.keys()).sort((a, b) => {
+			if (a === NO_ASSIGNEE) return 1;
+			if (b === NO_ASSIGNEE) return -1;
+			return a.localeCompare(b, "ja");
+		});
+
+		for (const name of names) {
+			const item = panel.createEl("label", { cls: "rg-assignee-item" });
+			const checkbox = item.createEl("input", { type: "checkbox" });
+			checkbox.checked = this.selectedAssignees.has(name);
+			const dot = item.createSpan({ cls: "rg-assignee-dot" });
+			const color = this.assigneeColor(name);
+			if (color) dot.style.backgroundColor = color;
+			item.createSpan({ text: name === NO_ASSIGNEE ? NO_ASSIGNEE_LABEL : name });
+			item.createSpan({ cls: "rg-assignee-count", text: String(counts.get(name)) });
+			checkbox.addEventListener("change", () => {
+				if (checkbox.checked) {
+					this.selectedAssignees.add(name);
+				} else {
+					this.selectedAssignees.delete(name);
+				}
+				this.renderAssigneePanel();
+				this.renderView();
+			});
+		}
+
+		const footer = panel.createDiv({ cls: "rg-assignee-footer" });
+		const clearBtn = footer.createEl("button", { text: "選択解除" });
+		clearBtn.disabled = this.selectedAssignees.size === 0;
+		clearBtn.addEventListener("click", () => {
+			this.selectedAssignees.clear();
+			this.renderAssigneePanel();
+			this.renderView();
+		});
 	}
 
 	/** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
@@ -199,15 +346,23 @@ export class GanttView extends ItemView {
 		});
 	}
 
-	private renderChart(): void {
-		if (!this.chartEl || !this.model) return;
+	/** 表示側フィルタを適用して再描画する(再取得はしない) */
+	private renderView(): void {
+		if (!this.chartEl || !this.rawIssues) return;
+		const visible = this.visibleIssues();
+		const model: GanttModel = buildGanttModel(visible);
 		const client = new RedmineClient(this.plugin.settings);
-		const opts = { issueUrl: (id: number) => client.issueUrl(id) };
+		const opts = {
+			issueUrl: (id: number) => client.issueUrl(id),
+			assigneeColor: (assignee: string) => this.assigneeColor(assignee),
+		};
 		if (this.plugin.settings.viewMode === "table") {
-			renderTable(this.chartEl, this.model, opts);
+			renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
 		} else {
-			renderGantt(this.chartEl, this.model, this.planRows(), this.scale, opts);
+			renderGantt(this.chartEl, model, this.planRows(), this.scale, opts);
 		}
+		const suffix = this.lastFetchedAt ? ` / 最終更新 ${this.lastFetchedAt}` : "";
+		this.setStatus(`表示 ${visible.length} / 取得 ${this.rawIssues.length}件${suffix}`);
 	}
 
 	private setStatus(text: string): void {

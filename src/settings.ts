@@ -46,7 +46,6 @@ export interface PlanItem {
 export interface RedmineGanttSettings {
 	baseUrl: string;
 	apiKey: string;
-	includeClosed: boolean;
 	defaultScale: GanttScale;
 	filters: GanttFilter[];
 	/** 選択中フィルタの name。空文字は未選択 */
@@ -58,7 +57,6 @@ export interface RedmineGanttSettings {
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	baseUrl: "",
 	apiKey: "",
-	includeClosed: false,
 	defaultScale: "week",
 	filters: [],
 	activeFilter: "",
@@ -107,18 +105,6 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					});
 			});
-
-		new Setting(containerEl)
-			.setName("完了チケットを含める")
-			.setDesc("オンにすると終了ステータスのチケットも表示します。")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.includeClosed)
-					.onChange(async (value) => {
-						this.plugin.settings.includeClosed = value;
-						await this.plugin.saveSettings();
-					})
-			);
 
 		new Setting(containerEl)
 			.setName("既定のスケール")

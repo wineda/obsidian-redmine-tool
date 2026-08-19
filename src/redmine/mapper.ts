@@ -1,5 +1,8 @@
 import type { RedmineIssue } from "./types";
 
+/** テーブルの「納期」列に表示するRedmineカスタムフィールド名 */
+export const DELIVERY_FIELD_NAME = "納期";
+
 export interface GanttTask {
 	id: number;
 	subject: string;
@@ -12,6 +15,8 @@ export interface GanttTask {
 	status: string;
 	tracker: string;
 	project: string;
+	/** カスタムフィールド「納期」の値(未設定は空文字) */
+	delivery: string;
 	parentId: number | null;
 	/** 親子ツリーでの深さ(ルート=0) */
 	depth: number;
@@ -53,6 +58,8 @@ function toTask(issue: RedmineIssue): GanttTask {
 		dueIsFallback = true;
 	}
 
+	const deliveryValue = issue.custom_fields?.find((f) => f.name === DELIVERY_FIELD_NAME)?.value;
+
 	return {
 		id: issue.id,
 		subject: issue.subject,
@@ -63,6 +70,7 @@ function toTask(issue: RedmineIssue): GanttTask {
 		status: issue.status.name,
 		tracker: issue.tracker.name,
 		project: issue.project.name,
+		delivery: Array.isArray(deliveryValue) ? deliveryValue.join(", ") : deliveryValue ?? "",
 		parentId: issue.parent?.id ?? null,
 		depth: 0,
 		startIsFallback,
