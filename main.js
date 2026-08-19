@@ -897,7 +897,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const planLane = /* @__PURE__ */ new Map();
   for (const plan of datedPlans) {
     const isSingleDay = diffDays(plan.start, plan.end) === 0;
-    const labelDays = isSingleDay ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / PX_PER_DAY[scale]) : 0;
+    const labelDays = isSingleDay ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
     const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
     let lane = laneEnds.findIndex((end) => plan.start > end);
     if (lane === -1) {
@@ -909,132 +909,103 @@ function renderGantt(container, model, plans, scale, range, opts) {
     planLane.set(plan, lane);
   }
   const planLaneCount = laneEnds.length;
-  const planTop = HEADER_HEIGHT;
-  const taskTop = planTop + planLaneCount * rowHeight;
-  const chartHeight = taskTop + model.tasks.length * rowHeight;
-  const body = container.createDiv({ cls: "rg-body" });
-  const left = body.createDiv({ cls: "rg-left" });
-  left.style.width = `${(_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH}px`;
-  left.style.fontSize = `${opts.fontSize}px`;
-  const leftHeader = left.createDiv({ cls: "rg-left-header" });
+  const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
+  const tasksHeight = model.tasks.length * rowHeight;
+  const leftWidth = (_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH;
+  const ticks = computeTicks(range, scale);
+  const today = /* @__PURE__ */ new Date();
+  const todayX = today >= range.start && diffDays(range.start, today) <= range.days ? diffDays(range.start, today) * ppd + ppd / 2 : null;
+  const leftEls = [];
+  const attachResizer = (host) => {
+    const resizer = host.createDiv({ cls: "rg-left-resizer" });
+    resizer.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = host.getBoundingClientRect().width;
+      const onMove = (ev) => {
+        var _a2;
+        const width = Math.max(MIN_LEFT_WIDTH, startWidth + ev.clientX - startX);
+        for (const el of leftEls) {
+          el.style.width = `${width}px`;
+        }
+        (_a2 = opts.onLeftWidthChange) == null ? void 0 : _a2.call(opts, width);
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.removeClass("rg-resizing");
+      };
+      document.body.addClass("rg-resizing");
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  };
+  const stickyTop = container.createDiv({ cls: "rg-sticky-top" });
+  const leftTop = stickyTop.createDiv({ cls: "rg-left rg-left-top" });
+  leftTop.style.width = `${leftWidth}px`;
+  leftTop.style.fontSize = `${opts.fontSize}px`;
+  leftEls.push(leftTop);
+  attachResizer(leftTop);
+  const leftHeader = leftTop.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
-  const resizer = left.createDiv({ cls: "rg-left-resizer" });
-  resizer.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = left.getBoundingClientRect().width;
-    const onMove = (ev) => {
-      var _a2;
-      const width = Math.max(MIN_LEFT_WIDTH, startWidth + ev.clientX - startX);
-      left.style.width = `${width}px`;
-      (_a2 = opts.onLeftWidthChange) == null ? void 0 : _a2.call(opts, width);
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.removeClass("rg-resizing");
-    };
-    document.body.addClass("rg-resizing");
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  });
   if (planLaneCount > 0) {
-    const planLabel = left.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
+    const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
     planLabel.style.height = `${planLaneCount * rowHeight}px`;
     planLabel.style.paddingLeft = "8px";
     planLabel.setText("\u5168\u4F53\u4E88\u5B9A");
   }
-  for (const task of model.tasks) {
-    const row = left.createDiv({ cls: "rg-left-row" });
-    row.style.height = `${rowHeight}px`;
-    row.style.paddingLeft = `${8 + task.depth * INDENT}px`;
-    row.createEl("a", {
-      cls: "rg-id-link",
-      text: `#${task.id}`,
-      href: opts.issueUrl(task.id)
-    });
-    row.createSpan({ cls: "rg-tracker", text: task.tracker });
-    const link = row.createEl("a", {
-      cls: "rg-issue-link",
-      text: task.subject,
-      href: opts.issueUrl(task.id)
-    });
-    link.setAttr("title", taskTooltip(task));
-    if (task.isClosed)
-      row.addClass("rg-row-closed");
-    if (task.isContext)
-      row.addClass("rg-row-context");
-    if (task.assignee) {
-      const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
-      const color = task.isContext ? null : opts.assigneeColor(task.assignee);
-      if (color) {
-        chip.style.backgroundColor = color;
-        chip.addClass("rg-assignee-chip-colored");
-      }
-    }
-  }
-  const chart = body.createDiv({ cls: "rg-chart" });
-  const root = svg("svg", {
+  const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
+  const topSvg = svg("svg", {
     width: chartWidth,
-    height: chartHeight,
-    viewBox: `0 0 ${chartWidth} ${chartHeight}`
+    height: topHeight,
+    viewBox: `0 0 ${chartWidth} ${topHeight}`
   });
-  chart.appendChild(root);
+  chartTop.appendChild(topSvg);
   if (planLaneCount > 0) {
-    root.appendChild(
+    topSvg.appendChild(
       svg("rect", {
         x: 0,
-        y: planTop,
+        y: HEADER_HEIGHT,
         width: chartWidth,
         height: planLaneCount * rowHeight,
         class: "rg-plan-area"
       })
     );
   }
-  for (const band of weekendBands(range, scale)) {
-    root.appendChild(
-      svg("rect", {
-        x: band.x,
-        y: HEADER_HEIGHT,
-        width: band.w,
-        height: chartHeight - HEADER_HEIGHT,
-        class: "rg-weekend"
-      })
-    );
-  }
-  const ticks = computeTicks(range, scale);
   for (const x of ticks.gridX) {
-    root.appendChild(
-      svg("line", { x1: x, y1: HEADER_HEIGHT, x2: x, y2: chartHeight, class: "rg-grid" })
+    topSvg.appendChild(
+      svg("line", { x1: x, y1: HEADER_HEIGHT, x2: x, y2: topHeight, class: "rg-grid" })
     );
   }
-  const totalRows = planLaneCount + model.tasks.length;
-  for (let i = 0; i <= totalRows; i++) {
+  for (let i = 0; i <= planLaneCount; i++) {
     const y = HEADER_HEIGHT + i * rowHeight;
-    root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
-  }
-  if (planLaneCount > 0) {
-    root.appendChild(
-      svg("line", { x1: 0, y1: taskTop, x2: chartWidth, y2: taskTop, class: "rg-separator" })
+    topSvg.appendChild(
+      svg("line", {
+        x1: 0,
+        y1: y,
+        x2: chartWidth,
+        y2: y,
+        class: i === planLaneCount ? "rg-separator" : "rg-grid"
+      })
     );
   }
   for (const tick of ticks.major) {
     const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
     t.textContent = tick.label;
-    root.appendChild(t);
-    root.appendChild(
+    topSvg.appendChild(t);
+    topSvg.appendChild(
       svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
     );
   }
   for (const tick of ticks.minor) {
     const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
     t.textContent = tick.label;
-    root.appendChild(t);
+    topSvg.appendChild(t);
   }
   for (const plan of datedPlans) {
     const lane = (_b = planLane.get(plan)) != null ? _b : 0;
-    const y = planTop + lane * rowHeight + barPadding;
+    const y = HEADER_HEIGHT + lane * rowHeight + barPadding;
     const h = rowHeight - barPadding * 2;
     const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
     const group = svg("g", {});
@@ -1082,7 +1053,66 @@ function renderGantt(container, model, plans, scale, range, opts) {
         group.appendChild(label);
       }
     }
-    root.appendChild(group);
+    topSvg.appendChild(group);
+  }
+  if (todayX !== null) {
+    topSvg.appendChild(
+      svg("line", { x1: todayX, y1: 0, x2: todayX, y2: topHeight, class: "rg-today" })
+    );
+  }
+  const body = container.createDiv({ cls: "rg-body" });
+  const left = body.createDiv({ cls: "rg-left" });
+  left.style.width = `${leftWidth}px`;
+  left.style.fontSize = `${opts.fontSize}px`;
+  leftEls.push(left);
+  attachResizer(left);
+  for (const task of model.tasks) {
+    const row = left.createDiv({ cls: "rg-left-row" });
+    row.style.height = `${rowHeight}px`;
+    row.style.paddingLeft = `${8 + task.depth * INDENT}px`;
+    row.createEl("a", {
+      cls: "rg-id-link",
+      text: `#${task.id}`,
+      href: opts.issueUrl(task.id)
+    });
+    row.createSpan({ cls: "rg-tracker", text: task.tracker });
+    const link = row.createEl("a", {
+      cls: "rg-issue-link",
+      text: task.subject,
+      href: opts.issueUrl(task.id)
+    });
+    link.setAttr("title", taskTooltip(task));
+    if (task.isClosed)
+      row.addClass("rg-row-closed");
+    if (task.isContext)
+      row.addClass("rg-row-context");
+    if (task.assignee) {
+      const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+      const color = task.isContext ? null : opts.assigneeColor(task.assignee);
+      if (color) {
+        chip.style.backgroundColor = color;
+        chip.addClass("rg-assignee-chip-colored");
+      }
+    }
+  }
+  const chart = body.createDiv({ cls: "rg-chart" });
+  const root = svg("svg", {
+    width: chartWidth,
+    height: tasksHeight,
+    viewBox: `0 0 ${chartWidth} ${tasksHeight}`
+  });
+  chart.appendChild(root);
+  for (const band of weekendBands(range, scale)) {
+    root.appendChild(
+      svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
+    );
+  }
+  for (const x of ticks.gridX) {
+    root.appendChild(svg("line", { x1: x, y1: 0, x2: x, y2: tasksHeight, class: "rg-grid" }));
+  }
+  for (let i = 0; i <= model.tasks.length; i++) {
+    const y = i * rowHeight;
+    root.appendChild(svg("line", { x1: 0, y1: y, x2: chartWidth, y2: y, class: "rg-grid" }));
   }
   model.tasks.forEach((task, i) => {
     if (!task.start || !task.due)
@@ -1092,7 +1122,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
       return;
     const x = diffDays(range.start, span.s) * ppd;
     const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-    const y = taskTop + i * rowHeight + barPadding;
+    const y = i * rowHeight + barPadding;
     const h = rowHeight - barPadding * 2;
     const group = svg("g", { class: "rg-bar-group" });
     const assigneeColor = task.assignee && !task.isContext ? opts.assigneeColor(task.assignee) : null;
@@ -1122,11 +1152,9 @@ function renderGantt(container, model, plans, scale, range, opts) {
     });
     root.appendChild(group);
   });
-  const today = /* @__PURE__ */ new Date();
-  if (today >= range.start && diffDays(range.start, today) <= range.days) {
-    const todayX = diffDays(range.start, today) * ppd + ppd / 2;
+  if (todayX !== null) {
     root.appendChild(
-      svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
+      svg("line", { x1: todayX, y1: 0, x2: todayX, y2: tasksHeight, class: "rg-today" })
     );
   }
 }
