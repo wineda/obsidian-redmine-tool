@@ -80,7 +80,7 @@ obsidian-redmine-tool/
 
 | エンドポイント | 用途 | 主なパラメータ |
 |---|---|---|
-| `/issues.json` | チケット取得 | `query_id`(保存クエリ), `parent_id`(親チケット配下の再帰探索), `status_id`, `limit`/`offset` |
+| `/issues.json` | チケット取得 | `query_id`(保存クエリ), `parent_id=~ID`(全子孫の一括取得。未対応環境は `parent_id=ID` を1親ずつ辿るBFSにフォールバック), `status_id`, `limit`/`offset` |
 | `/issues/:id.json` | 親チケット配下フィルタのルートチケット取得 | — |
 | `/projects.json` | 設定画面のプロジェクト選択肢 | `limit`/`offset` |
 | `/projects/:id/versions.json` | マイルストーン表示 | — |

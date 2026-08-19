@@ -130,7 +130,6 @@ var import_obsidian4 = require("obsidian");
 var import_obsidian2 = require("obsidian");
 var PAGE_SIZE = 100;
 var MAX_ISSUES = 1e4;
-var PARENT_CHUNK = 30;
 var RedmineApiError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -237,8 +236,9 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
   }
   /**
    * 親チケット配下のツリー全体を取得する。
-   * Redmine APIにサブツリー一括取得はないため、parent_id フィルタで1階層ずつ辿る。
-   * 途中の親が完了済みでも配下を辿れるよう探索は全ステータスで行い、最後に絞り込む。
+   * parent_id の「~」演算子(指定チケットの全子孫を再帰的に返す)で一括取得し、
+   * 対応していないRedmineでは1親ずつ辿るBFSにフォールバックする。
+   * 途中の親が完了済みでも配下が途切れないよう取得は全ステータスで行い、最後に絞り込む。
    */
   async fetchSubtreeIssues(value) {
     const rootId = Number(value.trim());
@@ -247,15 +247,46 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
     }
     const rootRes = await this.request("GET", `/issues/${rootId}.json`);
     const root = rootRes.issue;
+    let descendants = null;
+    try {
+      descendants = await this.fetchIssuesPaged({
+        parent_id: `~${rootId}`,
+        status_id: "*",
+        sort: "start_date:asc,id:asc"
+      });
+    } catch (e) {
+      descendants = null;
+    }
+    if (descendants === null || descendants.length === 0) {
+      descendants = await this.crawlDescendants(rootId);
+    }
+    const seen = /* @__PURE__ */ new Set([rootId]);
     const result = [root];
+    for (const issue of descendants) {
+      if (!seen.has(issue.id)) {
+        seen.add(issue.id);
+        result.push(issue);
+      }
+    }
+    if (!this.settings.includeClosed) {
+      return result.filter((issue) => issue.id === rootId || !issue.closed_on);
+    }
+    return result;
+  }
+  /**
+   * フォールバック: parent_id を1件ずつ指定して階層を辿る。
+   * Redmineの parent_id フィルタは「a|b」の複数指定でも先頭の値しか評価しないため、
+   * 必ず1リクエスト1親で問い合わせる。
+   */
+  async crawlDescendants(rootId) {
+    const result = [];
     const seen = /* @__PURE__ */ new Set([rootId]);
     let frontier = [rootId];
     while (frontier.length > 0 && result.length < MAX_ISSUES) {
       const next = [];
-      for (let i = 0; i < frontier.length; i += PARENT_CHUNK) {
-        const chunk = frontier.slice(i, i + PARENT_CHUNK);
+      for (const parentId of frontier) {
         const children = await this.fetchIssuesPaged({
-          parent_id: chunk.join("|"),
+          parent_id: String(parentId),
           status_id: "*",
           sort: "start_date:asc,id:asc"
         });
@@ -268,9 +299,6 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
         }
       }
       frontier = next;
-    }
-    if (!this.settings.includeClosed) {
-      return result.filter((issue) => issue.id === rootId || !issue.closed_on);
     }
     return result;
   }

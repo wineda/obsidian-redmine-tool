@@ -10,8 +10,6 @@ import type {
 const PAGE_SIZE = 100;
 // 暴走防止の上限。超えた場合は打ち切って部分結果を返す
 const MAX_ISSUES = 10000;
-// 親チケット配下の探索で、1リクエストに詰める parent_id の数
-const PARENT_CHUNK = 30;
 
 export class RedmineApiError extends Error {
 	constructor(public status: number, message: string) {
@@ -137,8 +135,9 @@ export class RedmineClient {
 
 	/**
 	 * 親チケット配下のツリー全体を取得する。
-	 * Redmine APIにサブツリー一括取得はないため、parent_id フィルタで1階層ずつ辿る。
-	 * 途中の親が完了済みでも配下を辿れるよう探索は全ステータスで行い、最後に絞り込む。
+	 * parent_id の「~」演算子(指定チケットの全子孫を再帰的に返す)で一括取得し、
+	 * 対応していないRedmineでは1親ずつ辿るBFSにフォールバックする。
+	 * 途中の親が完了済みでも配下が途切れないよう取得は全ステータスで行い、最後に絞り込む。
 	 */
 	private async fetchSubtreeIssues(value: string): Promise<RedmineIssue[]> {
 		const rootId = Number(value.trim());
@@ -148,16 +147,52 @@ export class RedmineClient {
 		const rootRes = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${rootId}.json`);
 		const root = rootRes.issue;
 
+		let descendants: RedmineIssue[] | null = null;
+		try {
+			descendants = await this.fetchIssuesPaged({
+				parent_id: `~${rootId}`,
+				status_id: "*",
+				sort: "start_date:asc,id:asc",
+			});
+		} catch {
+			// 「~」演算子が使えないRedmineではBFSで代替する
+			descendants = null;
+		}
+		if (descendants === null || descendants.length === 0) {
+			descendants = await this.crawlDescendants(rootId);
+		}
+
+		const seen = new Set<number>([rootId]);
 		const result: RedmineIssue[] = [root];
+		for (const issue of descendants) {
+			if (!seen.has(issue.id)) {
+				seen.add(issue.id);
+				result.push(issue);
+			}
+		}
+
+		if (!this.settings.includeClosed) {
+			// ルートは表示の起点なので残す
+			return result.filter((issue) => issue.id === rootId || !issue.closed_on);
+		}
+		return result;
+	}
+
+	/**
+	 * フォールバック: parent_id を1件ずつ指定して階層を辿る。
+	 * Redmineの parent_id フィルタは「a|b」の複数指定でも先頭の値しか評価しないため、
+	 * 必ず1リクエスト1親で問い合わせる。
+	 */
+	private async crawlDescendants(rootId: number): Promise<RedmineIssue[]> {
+		const result: RedmineIssue[] = [];
 		const seen = new Set<number>([rootId]);
 		let frontier: number[] = [rootId];
 
 		while (frontier.length > 0 && result.length < MAX_ISSUES) {
 			const next: number[] = [];
-			for (let i = 0; i < frontier.length; i += PARENT_CHUNK) {
-				const chunk = frontier.slice(i, i + PARENT_CHUNK);
+			for (const parentId of frontier) {
 				const children = await this.fetchIssuesPaged({
-					parent_id: chunk.join("|"),
+					parent_id: String(parentId),
 					status_id: "*",
 					sort: "start_date:asc,id:asc",
 				});
@@ -170,11 +205,6 @@ export class RedmineClient {
 				}
 			}
 			frontier = next;
-		}
-
-		if (!this.settings.includeClosed) {
-			// ルートは表示の起点なので残す
-			return result.filter((issue) => issue.id === rootId || !issue.closed_on);
 		}
 		return result;
 	}
