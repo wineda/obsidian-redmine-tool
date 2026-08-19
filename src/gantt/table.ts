@@ -35,7 +35,7 @@ export interface TableOptions extends RenderOptions {
 export function renderTable(container: HTMLElement, model: GanttModel, opts: TableOptions): void {
 	container.empty();
 
-	const all = [...model.tasks, ...model.undated];
+	const all = model.tasks;
 	if (all.length === 0) {
 		container.createDiv({ cls: "rg-empty", text: "表示できるチケットがありません。" });
 		return;
@@ -85,6 +85,7 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): void {
 	const row = tbody.createEl("tr");
 	if (task.isClosed) row.addClass("rg-row-closed");
+	if (task.isContext) row.addClass("rg-row-context");
 
 	// #
 	const idCell = row.createEl("td", { cls: "rg-td-id" });
@@ -194,7 +195,7 @@ interface Situation {
  * 完了チケット・比較対象の日付がないチケット・2週間より先のチケットは null(表示なし)
  */
 function computeSituation(task: GanttTask): Situation | null {
-	if (task.isClosed) return null;
+	if (task.isClosed || task.isContext) return null;
 	const due = task.due && !task.dueIsFallback ? task.due : null;
 	const delivery = parseDeliveryDate(task.delivery);
 	const label = due ? "期日" : delivery ? "納期" : null;

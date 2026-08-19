@@ -20,6 +20,8 @@ export interface GanttTask {
 	parentId: number | null;
 	/** 親子ツリーでの深さ(ルート=0) */
 	depth: number;
+	/** 絞り込み条件では非表示だが、ツリー構造の維持のために補って表示する親 */
+	isContext: boolean;
 	/** start_date が無く created_on から補完した場合 true */
 	startIsFallback: boolean;
 	/** due_date が無く開始日のみの1日バーにした場合 true */
@@ -73,6 +75,7 @@ function toTask(issue: RedmineIssue): GanttTask {
 		delivery: Array.isArray(deliveryValue) ? deliveryValue.join(", ") : deliveryValue ?? "",
 		parentId: issue.parent?.id ?? null,
 		depth: 0,
+		isContext: false,
 		startIsFallback,
 		dueIsFallback,
 		isClosed: !!issue.closed_on,
@@ -80,27 +83,30 @@ function toTask(issue: RedmineIssue): GanttTask {
 }
 
 export interface GanttModel {
-	/** 表示順(親子ツリーをDFSで平坦化済み)の日付ありタスク */
+	/** 表示順(親子ツリーをDFSで平坦化済み)。日付のないタスクもツリー内の位置に含む */
 	tasks: GanttTask[];
-	/** 開始日・期日とも無く、チャートに置けないタスク */
-	undated: GanttTask[];
 }
 
 /**
  * Redmineチケットをガント表示用モデルへ変換する。
  * 親チケットの直下に子チケットが並ぶよう、親子ツリーをDFSで平坦化する。
+ * 日付の有無に関係なく全チケットをツリーに含める(日付なしはバーなしの行になる)。
+ * contextIds に含まれるチケットは「補って表示する親」としてマークする。
  */
-export function buildGanttModel(issues: RedmineIssue[]): GanttModel {
+export function buildGanttModel(issues: RedmineIssue[], contextIds?: Set<number>): GanttModel {
 	const all = issues.map(toTask);
-	const dated = all.filter((t) => t.start !== null);
-	const undated = all.filter((t) => t.start === null);
+	if (contextIds) {
+		for (const task of all) {
+			task.isContext = contextIds.has(task.id);
+		}
+	}
 
-	const byId = new Map<number, GanttTask>(dated.map((t) => [t.id, t]));
+	const byId = new Map<number, GanttTask>(all.map((t) => [t.id, t]));
 	const children = new Map<number, GanttTask[]>();
 	const roots: GanttTask[] = [];
 
-	for (const task of dated) {
-		// 親が取得結果に含まれない(別プロジェクト・日付なし等)場合はルート扱い
+	for (const task of all) {
+		// 親が取得結果に含まれない(別プロジェクト等)場合はルート扱い
 		if (task.parentId !== null && byId.has(task.parentId)) {
 			const list = children.get(task.parentId) ?? [];
 			list.push(task);
@@ -120,5 +126,5 @@ export function buildGanttModel(issues: RedmineIssue[]): GanttModel {
 	};
 	for (const root of roots) visit(root, 0);
 
-	return { tasks: ordered, undated };
+	return { tasks: ordered };
 }

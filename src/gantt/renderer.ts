@@ -69,7 +69,7 @@ export function renderGantt(
 ): void {
 	container.empty();
 
-	if (model.tasks.length === 0 && model.undated.length === 0 && plans.length === 0) {
+	if (model.tasks.length === 0 && plans.length === 0) {
 		container.createDiv({ cls: "rg-empty", text: "表示できるチケットがありません。" });
 		return;
 	}
@@ -139,6 +139,7 @@ export function renderGantt(
 		});
 		link.setAttr("title", taskTooltip(task));
 		if (task.isClosed) row.addClass("rg-row-closed");
+		if (task.isContext) row.addClass("rg-row-context");
 		if (task.assignee) {
 			const assignee = row.createSpan({ cls: "rg-assignee", text: task.assignee });
 			const color = opts.assigneeColor(task.assignee);
@@ -255,11 +256,13 @@ export function renderGantt(
 
 		const group = svg("g", { class: "rg-bar-group" });
 
-		const assigneeColor = task.assignee ? opts.assigneeColor(task.assignee) : null;
+		const assigneeColor =
+			task.assignee && !task.isContext ? opts.assigneeColor(task.assignee) : null;
 
 		const barClass =
 			"rg-bar" +
 			(task.isClosed ? " rg-bar-closed" : "") +
+			(task.isContext ? " rg-bar-context" : "") +
 			(task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
 		const bar = svg("rect", { x, y, width: w, height: h, rx: 3, class: barClass });
 		if (assigneeColor && !task.isClosed) bar.style.fill = assigneeColor;
@@ -276,7 +279,10 @@ export function renderGantt(
 				width: (w * Math.min(task.doneRatio, 100)) / 100,
 				height: h,
 				rx: 3,
-				class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : ""),
+				class:
+					"rg-bar-progress" +
+					(task.isClosed ? " rg-bar-closed" : "") +
+					(task.isContext ? " rg-bar-context" : ""),
 			});
 			if (assigneeColor && !task.isClosed) progress.style.fill = assigneeColor;
 			group.appendChild(progress);
@@ -296,30 +302,6 @@ export function renderGantt(
 			svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
 		);
 	}
-
-	// ---- 日付未設定チケット ----
-	if (model.undated.length > 0) {
-		const undated = container.createDiv({ cls: "rg-undated" });
-		undated.createDiv({
-			cls: "rg-undated-header",
-			text: `日付未設定のチケット (${model.undated.length}件)`,
-		});
-		for (const task of model.undated) {
-			const row = undated.createDiv({ cls: "rg-undated-row" });
-			row.createEl("a", {
-				cls: "rg-id-link",
-				text: `#${task.id}`,
-				href: opts.issueUrl(task.id),
-			});
-			row.createSpan({ cls: "rg-tracker", text: task.tracker });
-			row.createEl("a", {
-				cls: "rg-issue-link",
-				text: task.subject,
-				href: opts.issueUrl(task.id),
-			});
-			if (task.assignee) row.createSpan({ cls: "rg-assignee", text: task.assignee });
-		}
-	}
 }
 
 export function formatDate(d: Date | null): string {
@@ -337,6 +319,7 @@ function taskTooltip(task: GanttTask): string {
 		`進捗: ${task.doneRatio}%`,
 	];
 	if (task.assignee) lines.push(`担当: ${task.assignee}`);
+	if (task.isContext) lines.push("(絞り込み条件外の親。ツリー表示のため参考表示)");
 	return lines.join("\n");
 }
 

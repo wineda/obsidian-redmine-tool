@@ -108,8 +108,29 @@
 	color: var(--text-faint);
 }
 
-.rg-left-row .rg-tracker,
-.rg-undated-row .rg-tracker {
+/* 絞り込み条件外だがツリー維持のために補って表示する親 */
+.rg-row-context .rg-issue-link,
+.rg-row-context .rg-id-link,
+.rg-row-context .rg-assignee {
+	color: var(--text-faint);
+}
+
+.rg-bar-context {
+	fill: var(--text-faint);
+	opacity: 0.2;
+}
+
+.rg-bar-progress.rg-bar-context {
+	fill: var(--text-faint);
+	opacity: 0.35;
+}
+
+.rg-table .rg-row-context td,
+.rg-table .rg-row-context .rg-issue-link {
+	color: var(--text-faint);
+}
+
+.rg-left-row .rg-tracker {
 	flex: 0 0 auto;
 }
 
@@ -632,33 +653,6 @@ body.rg-resizing {
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
-}
-
-/* ---- 日付未設定チケット ---- */
-.rg-undated {
-	border-top: 1px solid var(--background-modifier-border);
-	padding: 8px 10px;
-}
-
-.rg-undated-header {
-	font-weight: 600;
-	color: var(--text-muted);
-	margin-bottom: 4px;
-}
-
-.rg-undated-row {
-	display: flex;
-	gap: 6px;
-	padding: 2px 0;
-}
-
-.rg-undated-row .rg-issue-link {
-	color: var(--text-normal);
-	text-decoration: none;
-}
-
-.rg-undated-row .rg-issue-link:hover {
-	color: var(--text-accent);
 }
 
 /* ---- メッセージ ---- */

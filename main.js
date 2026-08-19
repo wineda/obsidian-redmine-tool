@@ -495,20 +495,24 @@ function toTask(issue) {
     delivery: Array.isArray(deliveryValue) ? deliveryValue.join(", ") : deliveryValue != null ? deliveryValue : "",
     parentId: (_g = (_f = issue.parent) == null ? void 0 : _f.id) != null ? _g : null,
     depth: 0,
+    isContext: false,
     startIsFallback,
     dueIsFallback,
     isClosed: !!issue.closed_on
   };
 }
-function buildGanttModel(issues) {
+function buildGanttModel(issues, contextIds) {
   var _a;
   const all = issues.map(toTask);
-  const dated = all.filter((t) => t.start !== null);
-  const undated = all.filter((t) => t.start === null);
-  const byId = new Map(dated.map((t) => [t.id, t]));
+  if (contextIds) {
+    for (const task of all) {
+      task.isContext = contextIds.has(task.id);
+    }
+  }
+  const byId = new Map(all.map((t) => [t.id, t]));
   const children = /* @__PURE__ */ new Map();
   const roots = [];
-  for (const task of dated) {
+  for (const task of all) {
     if (task.parentId !== null && byId.has(task.parentId)) {
       const list = (_a = children.get(task.parentId)) != null ? _a : [];
       list.push(task);
@@ -528,7 +532,7 @@ function buildGanttModel(issues) {
   };
   for (const root of roots)
     visit(root, 0);
-  return { tasks: ordered, undated };
+  return { tasks: ordered };
 }
 
 // src/issue/IssueEditModal.ts
@@ -867,7 +871,7 @@ function clipSpan(start, end, range) {
 function renderGantt(container, model, plans, scale, range, opts) {
   var _a;
   container.empty();
-  if (model.tasks.length === 0 && model.undated.length === 0 && plans.length === 0) {
+  if (model.tasks.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
@@ -931,6 +935,8 @@ function renderGantt(container, model, plans, scale, range, opts) {
     link.setAttr("title", taskTooltip(task));
     if (task.isClosed)
       row.addClass("rg-row-closed");
+    if (task.isContext)
+      row.addClass("rg-row-context");
     if (task.assignee) {
       const assignee = row.createSpan({ cls: "rg-assignee", text: task.assignee });
       const color = opts.assigneeColor(task.assignee);
@@ -1032,8 +1038,8 @@ function renderGantt(container, model, plans, scale, range, opts) {
     const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
     const h = ROW_HEIGHT - BAR_PADDING * 2;
     const group = svg("g", { class: "rg-bar-group" });
-    const assigneeColor = task.assignee ? opts.assigneeColor(task.assignee) : null;
-    const barClass = "rg-bar" + (task.isClosed ? " rg-bar-closed" : "") + (task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
+    const assigneeColor = task.assignee && !task.isContext ? opts.assigneeColor(task.assignee) : null;
+    const barClass = "rg-bar" + (task.isClosed ? " rg-bar-closed" : "") + (task.isContext ? " rg-bar-context" : "") + (task.startIsFallback || task.dueIsFallback ? " rg-bar-fallback" : "");
     const bar = svg("rect", { x, y, width: w, height: h, rx: 3, class: barClass });
     if (assigneeColor && !task.isClosed)
       bar.style.fill = assigneeColor;
@@ -1048,7 +1054,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
         width: w * Math.min(task.doneRatio, 100) / 100,
         height: h,
         rx: 3,
-        class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : "")
+        class: "rg-bar-progress" + (task.isClosed ? " rg-bar-closed" : "") + (task.isContext ? " rg-bar-context" : "")
       });
       if (assigneeColor && !task.isClosed)
         progress.style.fill = assigneeColor;
@@ -1065,29 +1071,6 @@ function renderGantt(container, model, plans, scale, range, opts) {
     root.appendChild(
       svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
     );
-  }
-  if (model.undated.length > 0) {
-    const undated = container.createDiv({ cls: "rg-undated" });
-    undated.createDiv({
-      cls: "rg-undated-header",
-      text: `\u65E5\u4ED8\u672A\u8A2D\u5B9A\u306E\u30C1\u30B1\u30C3\u30C8 (${model.undated.length}\u4EF6)`
-    });
-    for (const task of model.undated) {
-      const row = undated.createDiv({ cls: "rg-undated-row" });
-      row.createEl("a", {
-        cls: "rg-id-link",
-        text: `#${task.id}`,
-        href: opts.issueUrl(task.id)
-      });
-      row.createSpan({ cls: "rg-tracker", text: task.tracker });
-      row.createEl("a", {
-        cls: "rg-issue-link",
-        text: task.subject,
-        href: opts.issueUrl(task.id)
-      });
-      if (task.assignee)
-        row.createSpan({ cls: "rg-assignee", text: task.assignee });
-    }
   }
 }
 function formatDate(d) {
@@ -1106,6 +1089,8 @@ function taskTooltip(task) {
   ];
   if (task.assignee)
     lines.push(`\u62C5\u5F53: ${task.assignee}`);
+  if (task.isContext)
+    lines.push("(\u7D5E\u308A\u8FBC\u307F\u6761\u4EF6\u5916\u306E\u89AA\u3002\u30C4\u30EA\u30FC\u8868\u793A\u306E\u305F\u3081\u53C2\u8003\u8868\u793A)");
   return lines.join("\n");
 }
 function planTooltip(plan) {
@@ -1138,7 +1123,7 @@ function defaultTableWidths() {
 }
 function renderTable(container, model, opts) {
   container.empty();
-  const all = [...model.tasks, ...model.undated];
+  const all = model.tasks;
   if (all.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
@@ -1183,6 +1168,8 @@ function renderRow(tbody, task, opts) {
   const row = tbody.createEl("tr");
   if (task.isClosed)
     row.addClass("rg-row-closed");
+  if (task.isContext)
+    row.addClass("rg-row-context");
   const idCell = row.createEl("td", { cls: "rg-td-id" });
   idCell.createEl("a", {
     cls: "rg-issue-link",
@@ -1259,7 +1246,7 @@ function parseDeliveryDate(s) {
 }
 var DUE_SOON_DAYS = 14;
 function computeSituation(task) {
-  if (task.isClosed)
+  if (task.isClosed || task.isContext)
     return null;
   const due = task.due && !task.dueIsFallback ? task.due : null;
   const delivery = parseDeliveryDate(task.delivery);
@@ -1527,25 +1514,47 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.loading = false;
     }
   }
-  /** 表示側フィルタ(完了・担当者)を適用したチケット群 */
+  /**
+   * 表示側フィルタ(完了・担当者)を適用したチケット群。
+   * 絞り込みで非表示になった親は「コンテキスト」として補い、ツリー構造を維持する。
+   */
   visibleIssues() {
+    var _a, _b, _c, _d;
     if (!this.rawIssues)
-      return [];
+      return { issues: [], contextIds: /* @__PURE__ */ new Set() };
     const filter = this.activeFilter();
     const rootId = (filter == null ? void 0 : filter.type) === "parent" ? Number(filter.value.trim()) : NaN;
-    let issues = this.rawIssues;
-    if (!this.showClosed) {
-      issues = issues.filter((issue) => !issue.closed_on || issue.id === rootId);
-    }
-    if (this.selectedAssignees.size > 0) {
-      issues = issues.filter(
-        (issue) => {
-          var _a, _b;
-          return this.selectedAssignees.has((_b = (_a = issue.assigned_to) == null ? void 0 : _a.name) != null ? _b : NO_ASSIGNEE);
+    const visible = /* @__PURE__ */ new Set();
+    for (const issue of this.rawIssues) {
+      if (issue.id !== rootId) {
+        if (!this.showClosed && issue.closed_on)
+          continue;
+        if (this.selectedAssignees.size > 0 && !this.selectedAssignees.has((_b = (_a = issue.assigned_to) == null ? void 0 : _a.name) != null ? _b : NO_ASSIGNEE)) {
+          continue;
         }
-      );
+      }
+      visible.add(issue.id);
     }
-    return issues;
+    const byId = new Map(this.rawIssues.map((issue) => [issue.id, issue]));
+    const contextIds = /* @__PURE__ */ new Set();
+    for (const issue of this.rawIssues) {
+      if (!visible.has(issue.id))
+        continue;
+      let parentId = (_c = issue.parent) == null ? void 0 : _c.id;
+      while (parentId !== void 0 && !visible.has(parentId) && !contextIds.has(parentId)) {
+        const parent = byId.get(parentId);
+        if (!parent)
+          break;
+        contextIds.add(parent.id);
+        parentId = (_d = parent.parent) == null ? void 0 : _d.id;
+      }
+    }
+    return {
+      issues: this.rawIssues.filter(
+        (issue) => visible.has(issue.id) || contextIds.has(issue.id)
+      ),
+      contextIds
+    };
   }
   /**
    * 担当者→表示色。
@@ -1654,8 +1663,8 @@ var GanttView = class extends import_obsidian6.ItemView {
   renderView() {
     if (!this.chartEl || !this.rawIssues)
       return;
-    const visible = this.visibleIssues();
-    const model = buildGanttModel(visible);
+    const { issues, contextIds } = this.visibleIssues();
+    const model = buildGanttModel(issues, contextIds);
     const client = new RedmineClient(this.plugin.settings);
     const opts = {
       issueUrl: (id) => client.issueUrl(id),
@@ -1675,7 +1684,8 @@ var GanttView = class extends import_obsidian6.ItemView {
       renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
     }
     const suffix = this.lastFetchedAt ? ` / \u6700\u7D42\u66F4\u65B0 ${this.lastFetchedAt}` : "";
-    this.setStatus(`\u8868\u793A ${visible.length} / \u53D6\u5F97 ${this.rawIssues.length}\u4EF6${suffix}`);
+    const shown = issues.length - contextIds.size;
+    this.setStatus(`\u8868\u793A ${shown} / \u53D6\u5F97 ${this.rawIssues.length}\u4EF6${suffix}`);
   }
   /** チケット編集モーダルを開き、保存後は該当チケットだけ差し替えて再描画する */
   openEditModal(issueId) {

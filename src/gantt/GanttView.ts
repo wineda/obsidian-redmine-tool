@@ -302,22 +302,50 @@ export class GanttView extends ItemView {
 		}
 	}
 
-	/** 表示側フィルタ(完了・担当者)を適用したチケット群 */
-	private visibleIssues(): RedmineIssue[] {
-		if (!this.rawIssues) return [];
+	/**
+	 * 表示側フィルタ(完了・担当者)を適用したチケット群。
+	 * 絞り込みで非表示になった親は「コンテキスト」として補い、ツリー構造を維持する。
+	 */
+	private visibleIssues(): { issues: RedmineIssue[]; contextIds: Set<number> } {
+		if (!this.rawIssues) return { issues: [], contextIds: new Set() };
 		const filter = this.activeFilter();
 		const rootId = filter?.type === "parent" ? Number(filter.value.trim()) : NaN;
-		let issues = this.rawIssues;
-		if (!this.showClosed) {
-			// 親チケット配下フィルタのルートは表示の起点なので残す
-			issues = issues.filter((issue) => !issue.closed_on || issue.id === rootId);
+
+		const visible = new Set<number>();
+		for (const issue of this.rawIssues) {
+			// 親チケット配下フィルタのルートは表示の起点なので常に残す
+			if (issue.id !== rootId) {
+				if (!this.showClosed && issue.closed_on) continue;
+				if (
+					this.selectedAssignees.size > 0 &&
+					!this.selectedAssignees.has(issue.assigned_to?.name ?? NO_ASSIGNEE)
+				) {
+					continue;
+				}
+			}
+			visible.add(issue.id);
 		}
-		if (this.selectedAssignees.size > 0) {
-			issues = issues.filter((issue) =>
-				this.selectedAssignees.has(issue.assigned_to?.name ?? NO_ASSIGNEE)
-			);
+
+		// 表示対象の祖先で非表示のものをコンテキストとして補う
+		const byId = new Map(this.rawIssues.map((issue) => [issue.id, issue]));
+		const contextIds = new Set<number>();
+		for (const issue of this.rawIssues) {
+			if (!visible.has(issue.id)) continue;
+			let parentId = issue.parent?.id;
+			while (parentId !== undefined && !visible.has(parentId) && !contextIds.has(parentId)) {
+				const parent = byId.get(parentId);
+				if (!parent) break;
+				contextIds.add(parent.id);
+				parentId = parent.parent?.id;
+			}
 		}
-		return issues;
+
+		return {
+			issues: this.rawIssues.filter(
+				(issue) => visible.has(issue.id) || contextIds.has(issue.id)
+			),
+			contextIds,
+		};
 	}
 
 	/**
@@ -422,8 +450,8 @@ export class GanttView extends ItemView {
 	/** 表示側フィルタを適用して再描画する(再取得はしない) */
 	private renderView(): void {
 		if (!this.chartEl || !this.rawIssues) return;
-		const visible = this.visibleIssues();
-		const model: GanttModel = buildGanttModel(visible);
+		const { issues, contextIds } = this.visibleIssues();
+		const model: GanttModel = buildGanttModel(issues, contextIds);
 		const client = new RedmineClient(this.plugin.settings);
 		const opts = {
 			issueUrl: (id: number) => client.issueUrl(id),
@@ -443,7 +471,8 @@ export class GanttView extends ItemView {
 			renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
 		}
 		const suffix = this.lastFetchedAt ? ` / 最終更新 ${this.lastFetchedAt}` : "";
-		this.setStatus(`表示 ${visible.length} / 取得 ${this.rawIssues.length}件${suffix}`);
+		const shown = issues.length - contextIds.size;
+		this.setStatus(`表示 ${shown} / 取得 ${this.rawIssues.length}件${suffix}`);
 	}
 
 	/** チケット編集モーダルを開き、保存後は該当チケットだけ差し替えて再描画する */
