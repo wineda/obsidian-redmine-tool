@@ -6,6 +6,7 @@ import type { RedmineIssue } from "../redmine/types";
 import type { GanttFilter, GanttScale, PlanItem, ViewMode } from "../settings";
 import { PlanModal } from "../plan/PlanModal";
 import { PlanRow, renderGantt } from "./renderer";
+import { TimeRange, monthRange } from "./scale";
 import { defaultTableWidths, renderTable } from "./table";
 
 export const VIEW_TYPE_REDMINE_GANTT = "redmine-gantt-view";
@@ -40,6 +41,8 @@ export class GanttView extends ItemView {
 	private statusEl: HTMLElement | null = null;
 	private chartEl: HTMLElement | null = null;
 	private scaleSelect: HTMLSelectElement | null = null;
+	private rangeControls: HTMLElement | null = null;
+	private monthInput: HTMLInputElement | null = null;
 	private assigneePanel: HTMLElement | null = null;
 	private assigneeBtn: HTMLElement | null = null;
 	private loading = false;
@@ -50,10 +53,18 @@ export class GanttView extends ItemView {
 	private selectedAssignees = new Set<string>();
 	private tableWidths: number[] = defaultTableWidths();
 
+	// ガントの表示期間(既定: 当月から2ヶ月)
+	private rangeYear: number;
+	private rangeMonth: number;
+	private rangeMonths = 2;
+
 	constructor(leaf: WorkspaceLeaf, plugin: RedmineGanttPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 		this.scale = plugin.settings.defaultScale;
+		const now = new Date();
+		this.rangeYear = now.getFullYear();
+		this.rangeMonth = now.getMonth();
 	}
 
 	getViewType(): string {
@@ -137,6 +148,42 @@ export class GanttView extends ItemView {
 			this.renderView();
 		});
 
+		// 表示期間(開始月+表示月数)
+		this.rangeControls = toolbar.createDiv({ cls: "rg-range" });
+		const prevBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
+		setIcon(prevBtn, "chevron-left");
+		prevBtn.setAttr("aria-label", "前月へ");
+		prevBtn.addEventListener("click", () => this.shiftRange(-1));
+
+		this.monthInput = this.rangeControls.createEl("input", {
+			cls: "rg-month-input",
+			type: "month",
+		});
+		this.monthInput.value = this.monthInputValue();
+		this.monthInput.addEventListener("change", () => {
+			const m = this.monthInput!.value.match(/^(\d{4})-(\d{2})$/);
+			if (!m) return;
+			this.rangeYear = Number(m[1]);
+			this.rangeMonth = Number(m[2]) - 1;
+			this.renderView();
+		});
+
+		const nextBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
+		setIcon(nextBtn, "chevron-right");
+		nextBtn.setAttr("aria-label", "次月へ");
+		nextBtn.addEventListener("click", () => this.shiftRange(1));
+
+		const monthsSelect = this.rangeControls.createEl("select", { cls: "dropdown" });
+		for (const months of [1, 2, 3, 6, 12]) {
+			const option = monthsSelect.createEl("option", { text: `${months}ヶ月` });
+			option.value = String(months);
+		}
+		monthsSelect.value = String(this.rangeMonths);
+		monthsSelect.addEventListener("change", () => {
+			this.rangeMonths = Number(monthsSelect.value);
+			this.renderView();
+		});
+
 		// 完了チケットの表示切替(既定: 非表示)
 		const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
 		const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
@@ -195,9 +242,25 @@ export class GanttView extends ItemView {
 	}
 
 	private updateScaleVisibility(): void {
-		if (!this.scaleSelect) return;
-		this.scaleSelect.style.display =
-			this.plugin.settings.viewMode === "table" ? "none" : "";
+		const display = this.plugin.settings.viewMode === "table" ? "none" : "";
+		if (this.scaleSelect) this.scaleSelect.style.display = display;
+		if (this.rangeControls) this.rangeControls.style.display = display;
+	}
+
+	private monthInputValue(): string {
+		return `${this.rangeYear}-${String(this.rangeMonth + 1).padStart(2, "0")}`;
+	}
+
+	private shiftRange(deltaMonths: number): void {
+		const d = new Date(this.rangeYear, this.rangeMonth + deltaMonths, 1);
+		this.rangeYear = d.getFullYear();
+		this.rangeMonth = d.getMonth();
+		if (this.monthInput) this.monthInput.value = this.monthInputValue();
+		this.renderView();
+	}
+
+	private ganttRange(): TimeRange {
+		return monthRange(this.rangeYear, this.rangeMonth, this.rangeMonths);
 	}
 
 	async refresh(): Promise<void> {
@@ -359,7 +422,7 @@ export class GanttView extends ItemView {
 		if (this.plugin.settings.viewMode === "table") {
 			renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
 		} else {
-			renderGantt(this.chartEl, model, this.planRows(), this.scale, opts);
+			renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
 		}
 		const suffix = this.lastFetchedAt ? ` / 最終更新 ${this.lastFetchedAt}` : "";
 		this.setStatus(`表示 ${visible.length} / 取得 ${this.rawIssues.length}件${suffix}`);

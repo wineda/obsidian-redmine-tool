@@ -76,7 +76,7 @@ export class RedmineClient {
 			);
 		}
 		if (response.status === 404) {
-			throw new RedmineApiError(404, `見つかりません: ${path}(プロジェクト識別子を確認してください)`);
+			throw new RedmineApiError(404, `見つかりません (HTTP 404): ${path}`);
 		}
 		if (response.status >= 400) {
 			throw new RedmineApiError(response.status, `Redmine APIエラー (HTTP ${response.status}): ${path}`);
@@ -119,10 +119,11 @@ export class RedmineClient {
 	 * 保存クエリでの取得。value は「クエリID」または「プロジェクト識別子:クエリID」。
 	 * 絞り込み条件(ステータス含む)はクエリ側の定義に従うため status_id は付けない。
 	 */
-	private fetchQueryIssues(value: string): Promise<RedmineIssue[]> {
-		const m = value.trim().match(/^(.+):(\d+)$/);
+	private async fetchQueryIssues(value: string): Promise<RedmineIssue[]> {
+		// 全角コロンでの区切りも受け付ける
+		const m = value.trim().match(/^(.+)[::](\d+)$/);
 		const params: Record<string, string> = m
-			? { project_id: m[1], query_id: m[2] }
+			? { project_id: m[1].trim(), query_id: m[2] }
 			: { query_id: value.trim() };
 		if (!/^\d+$/.test(params.query_id)) {
 			throw new RedmineApiError(
@@ -130,7 +131,21 @@ export class RedmineClient {
 				`保存クエリの指定が不正です: "${value}"(クエリID、または「プロジェクト識別子:クエリID」で指定してください)`
 			);
 		}
-		return this.fetchIssuesPaged(params);
+		try {
+			return await this.fetchIssuesPaged(params);
+		} catch (e) {
+			if (e instanceof RedmineApiError && e.status === 404) {
+				throw new RedmineApiError(
+					404,
+					`保存クエリ(ID: ${params.query_id})が見つかりません。次を確認してください:\n` +
+						`・クエリIDが正しいか(Redmineのチケット一覧URLの query_id= の数値)\n` +
+						`・APIキーのユーザーがそのクエリを使えるか(自分のクエリ、または公開クエリのみ)\n` +
+						`・プロジェクト内で保存したクエリは「プロジェクト識別子:クエリID」の形式で指定` +
+						(params.project_id ? `(現在の指定プロジェクト: ${params.project_id})` : "")
+				);
+			}
+			throw e;
+		}
 	}
 
 	/**
@@ -144,8 +159,19 @@ export class RedmineClient {
 		if (!Number.isInteger(rootId) || rootId <= 0) {
 			throw new RedmineApiError(0, `親チケットIDが不正です: "${value}"(チケット番号を指定してください)`);
 		}
-		const rootRes = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${rootId}.json`);
-		const root = rootRes.issue;
+		let root: RedmineIssue;
+		try {
+			const rootRes = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${rootId}.json`);
+			root = rootRes.issue;
+		} catch (e) {
+			if (e instanceof RedmineApiError && e.status === 404) {
+				throw new RedmineApiError(
+					404,
+					`チケット #${rootId} が見つかりません。チケット番号と閲覧権限を確認してください。`
+				);
+			}
+			throw e;
+		}
 
 		let descendants: RedmineIssue[] | null = null;
 		try {

@@ -176,7 +176,7 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
       );
     }
     if (response.status === 404) {
-      throw new RedmineApiError(404, `\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${path}(\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044)`);
+      throw new RedmineApiError(404, `\u898B\u3064\u304B\u308A\u307E\u305B\u3093 (HTTP 404): ${path}`);
     }
     if (response.status >= 400) {
       throw new RedmineApiError(response.status, `Redmine API\u30A8\u30E9\u30FC (HTTP ${response.status}): ${path}`);
@@ -216,16 +216,29 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
    * 保存クエリでの取得。value は「クエリID」または「プロジェクト識別子:クエリID」。
    * 絞り込み条件(ステータス含む)はクエリ側の定義に従うため status_id は付けない。
    */
-  fetchQueryIssues(value) {
-    const m = value.trim().match(/^(.+):(\d+)$/);
-    const params = m ? { project_id: m[1], query_id: m[2] } : { query_id: value.trim() };
+  async fetchQueryIssues(value) {
+    const m = value.trim().match(/^(.+)[::](\d+)$/);
+    const params = m ? { project_id: m[1].trim(), query_id: m[2] } : { query_id: value.trim() };
     if (!/^\d+$/.test(params.query_id)) {
       throw new RedmineApiError(
         0,
         `\u4FDD\u5B58\u30AF\u30A8\u30EA\u306E\u6307\u5B9A\u304C\u4E0D\u6B63\u3067\u3059: "${value}"(\u30AF\u30A8\u30EAID\u3001\u307E\u305F\u306F\u300C\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50:\u30AF\u30A8\u30EAID\u300D\u3067\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044)`
       );
     }
-    return this.fetchIssuesPaged(params);
+    try {
+      return await this.fetchIssuesPaged(params);
+    } catch (e) {
+      if (e instanceof RedmineApiError && e.status === 404) {
+        throw new RedmineApiError(
+          404,
+          `\u4FDD\u5B58\u30AF\u30A8\u30EA(ID: ${params.query_id})\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002\u6B21\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044:
+\u30FB\u30AF\u30A8\u30EAID\u304C\u6B63\u3057\u3044\u304B(Redmine\u306E\u30C1\u30B1\u30C3\u30C8\u4E00\u89A7URL\u306E query_id= \u306E\u6570\u5024)
+\u30FBAPI\u30AD\u30FC\u306E\u30E6\u30FC\u30B6\u30FC\u304C\u305D\u306E\u30AF\u30A8\u30EA\u3092\u4F7F\u3048\u308B\u304B(\u81EA\u5206\u306E\u30AF\u30A8\u30EA\u3001\u307E\u305F\u306F\u516C\u958B\u30AF\u30A8\u30EA\u306E\u307F)
+\u30FB\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5185\u3067\u4FDD\u5B58\u3057\u305F\u30AF\u30A8\u30EA\u306F\u300C\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u8B58\u5225\u5B50:\u30AF\u30A8\u30EAID\u300D\u306E\u5F62\u5F0F\u3067\u6307\u5B9A` + (params.project_id ? `(\u73FE\u5728\u306E\u6307\u5B9A\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8: ${params.project_id})` : "")
+        );
+      }
+      throw e;
+    }
   }
   /**
    * 親チケット配下のツリー全体を取得する。
@@ -238,8 +251,19 @@ URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u905
     if (!Number.isInteger(rootId) || rootId <= 0) {
       throw new RedmineApiError(0, `\u89AA\u30C1\u30B1\u30C3\u30C8ID\u304C\u4E0D\u6B63\u3067\u3059: "${value}"(\u30C1\u30B1\u30C3\u30C8\u756A\u53F7\u3092\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044)`);
     }
-    const rootRes = await this.request("GET", `/issues/${rootId}.json`);
-    const root = rootRes.issue;
+    let root;
+    try {
+      const rootRes = await this.request("GET", `/issues/${rootId}.json`);
+      root = rootRes.issue;
+    } catch (e) {
+      if (e instanceof RedmineApiError && e.status === 404) {
+        throw new RedmineApiError(
+          404,
+          `\u30C1\u30B1\u30C3\u30C8 #${rootId} \u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002\u30C1\u30B1\u30C3\u30C8\u756A\u53F7\u3068\u95B2\u89A7\u6A29\u9650\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002`
+        );
+      }
+      throw e;
+    }
     let descendants = null;
     try {
       descendants = await this.fetchIssuesPaged({
@@ -473,19 +497,10 @@ function addDays(d, days) {
 function diffDays(from, to) {
   return Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_PER_DAY);
 }
-function computeRange(tasks) {
-  const today = startOfDay(/* @__PURE__ */ new Date());
-  let min = today;
-  let max = today;
-  for (const t of tasks) {
-    if (t.start && t.start < min)
-      min = startOfDay(t.start);
-    if (t.due && t.due > max)
-      max = startOfDay(t.due);
-  }
-  const start = addDays(min, -7);
-  const end = addDays(max, 14);
-  return { start, end, days: diffDays(start, end) + 1 };
+function monthRange(year, month0, months) {
+  const start = new Date(year, month0, 1);
+  const end = new Date(year, month0 + months, 0);
+  return { start, end, days: diffDays(start, end) };
 }
 function computeTicks(range, scale) {
   const ppd = PX_PER_DAY[scale];
@@ -539,16 +554,20 @@ function svg(tag, attrs = {}) {
   }
   return el;
 }
-function renderGantt(container, model, plans, scale, opts) {
+function clipSpan(start, end, range) {
+  if (end < range.start || start > range.end)
+    return null;
+  return {
+    s: start < range.start ? range.start : start,
+    e: end > range.end ? range.end : end
+  };
+}
+function renderGantt(container, model, plans, scale, range, opts) {
   container.empty();
   if (model.tasks.length === 0 && model.undated.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
-  const range = computeRange([
-    ...plans.map((p) => ({ start: p.start, due: p.end })),
-    ...model.tasks
-  ]);
   const ppd = PX_PER_DAY[scale];
   const chartWidth = (range.days + 1) * ppd;
   const planTop = HEADER_HEIGHT;
@@ -653,8 +672,11 @@ function renderGantt(container, model, plans, scale, opts) {
   plans.forEach((plan, i) => {
     if (!plan.start || !plan.end)
       return;
-    const x = diffDays(range.start, plan.start) * ppd;
-    const w = Math.max((diffDays(plan.start, plan.end) + 1) * ppd, 4);
+    const span = clipSpan(plan.start, plan.end, range);
+    if (!span)
+      return;
+    const x = diffDays(range.start, span.s) * ppd;
+    const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
     const y = planTop + i * ROW_HEIGHT + BAR_PADDING;
     const h = ROW_HEIGHT - BAR_PADDING * 2;
     const bar = svg("rect", {
@@ -673,8 +695,11 @@ function renderGantt(container, model, plans, scale, opts) {
   model.tasks.forEach((task, i) => {
     if (!task.start || !task.due)
       return;
-    const x = diffDays(range.start, task.start) * ppd;
-    const w = Math.max((diffDays(task.start, task.due) + 1) * ppd, 4);
+    const span = clipSpan(task.start, task.due, range);
+    if (!span)
+      return;
+    const x = diffDays(range.start, span.s) * ppd;
+    const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
     const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
     const h = ROW_HEIGHT - BAR_PADDING * 2;
     const group = svg("g", { class: "rg-bar-group" });
@@ -705,10 +730,13 @@ function renderGantt(container, model, plans, scale, opts) {
     });
     root.appendChild(group);
   });
-  const todayX = diffDays(range.start, /* @__PURE__ */ new Date()) * ppd + ppd / 2;
-  root.appendChild(
-    svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
-  );
+  const today = /* @__PURE__ */ new Date();
+  if (today >= range.start && diffDays(range.start, today) <= range.days) {
+    const todayX = diffDays(range.start, today) * ppd + ppd / 2;
+    root.appendChild(
+      svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
+    );
+  }
   if (model.undated.length > 0) {
     const undated = container.createDiv({ cls: "rg-undated" });
     undated.createDiv({
@@ -896,6 +924,8 @@ var GanttView = class extends import_obsidian4.ItemView {
     this.statusEl = null;
     this.chartEl = null;
     this.scaleSelect = null;
+    this.rangeControls = null;
+    this.monthInput = null;
     this.assigneePanel = null;
     this.assigneeBtn = null;
     this.loading = false;
@@ -904,8 +934,12 @@ var GanttView = class extends import_obsidian4.ItemView {
     this.showClosed = false;
     this.selectedAssignees = /* @__PURE__ */ new Set();
     this.tableWidths = defaultTableWidths();
+    this.rangeMonths = 2;
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
+    const now = /* @__PURE__ */ new Date();
+    this.rangeYear = now.getFullYear();
+    this.rangeMonth = now.getMonth();
   }
   getViewType() {
     return VIEW_TYPE_REDMINE_GANTT;
@@ -977,6 +1011,38 @@ var GanttView = class extends import_obsidian4.ItemView {
       this.scale = this.scaleSelect.value;
       this.renderView();
     });
+    this.rangeControls = toolbar.createDiv({ cls: "rg-range" });
+    const prevBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
+    (0, import_obsidian4.setIcon)(prevBtn, "chevron-left");
+    prevBtn.setAttr("aria-label", "\u524D\u6708\u3078");
+    prevBtn.addEventListener("click", () => this.shiftRange(-1));
+    this.monthInput = this.rangeControls.createEl("input", {
+      cls: "rg-month-input",
+      type: "month"
+    });
+    this.monthInput.value = this.monthInputValue();
+    this.monthInput.addEventListener("change", () => {
+      const m = this.monthInput.value.match(/^(\d{4})-(\d{2})$/);
+      if (!m)
+        return;
+      this.rangeYear = Number(m[1]);
+      this.rangeMonth = Number(m[2]) - 1;
+      this.renderView();
+    });
+    const nextBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
+    (0, import_obsidian4.setIcon)(nextBtn, "chevron-right");
+    nextBtn.setAttr("aria-label", "\u6B21\u6708\u3078");
+    nextBtn.addEventListener("click", () => this.shiftRange(1));
+    const monthsSelect = this.rangeControls.createEl("select", { cls: "dropdown" });
+    for (const months of [1, 2, 3, 6, 12]) {
+      const option = monthsSelect.createEl("option", { text: `${months}\u30F6\u6708` });
+      option.value = String(months);
+    }
+    monthsSelect.value = String(this.rangeMonths);
+    monthsSelect.addEventListener("change", () => {
+      this.rangeMonths = Number(monthsSelect.value);
+      this.renderView();
+    });
     const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
     const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
     closedLabel.appendText("\u5B8C\u4E86");
@@ -1022,9 +1088,25 @@ var GanttView = class extends import_obsidian4.ItemView {
     return (_a = this.plugin.settings.filters.find((f) => f.name === name)) != null ? _a : null;
   }
   updateScaleVisibility() {
-    if (!this.scaleSelect)
-      return;
-    this.scaleSelect.style.display = this.plugin.settings.viewMode === "table" ? "none" : "";
+    const display = this.plugin.settings.viewMode === "table" ? "none" : "";
+    if (this.scaleSelect)
+      this.scaleSelect.style.display = display;
+    if (this.rangeControls)
+      this.rangeControls.style.display = display;
+  }
+  monthInputValue() {
+    return `${this.rangeYear}-${String(this.rangeMonth + 1).padStart(2, "0")}`;
+  }
+  shiftRange(deltaMonths) {
+    const d = new Date(this.rangeYear, this.rangeMonth + deltaMonths, 1);
+    this.rangeYear = d.getFullYear();
+    this.rangeMonth = d.getMonth();
+    if (this.monthInput)
+      this.monthInput.value = this.monthInputValue();
+    this.renderView();
+  }
+  ganttRange() {
+    return monthRange(this.rangeYear, this.rangeMonth, this.rangeMonths);
   }
   async refresh() {
     if (this.loading || !this.chartEl)
@@ -1188,7 +1270,7 @@ var GanttView = class extends import_obsidian4.ItemView {
     if (this.plugin.settings.viewMode === "table") {
       renderTable(this.chartEl, model, { ...opts, widths: this.tableWidths });
     } else {
-      renderGantt(this.chartEl, model, this.planRows(), this.scale, opts);
+      renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
     }
     const suffix = this.lastFetchedAt ? ` / \u6700\u7D42\u66F4\u65B0 ${this.lastFetchedAt}` : "";
     this.setStatus(`\u8868\u793A ${visible.length} / \u53D6\u5F97 ${this.rawIssues.length}\u4EF6${suffix}`);

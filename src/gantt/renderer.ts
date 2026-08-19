@@ -2,7 +2,7 @@ import type { GanttModel, GanttTask } from "../redmine/mapper";
 import { GanttScale, PLAN_STATUS_LABELS, PlanStatus } from "../settings";
 import {
 	PX_PER_DAY,
-	computeRange,
+	TimeRange,
 	computeTicks,
 	diffDays,
 	weekendBands,
@@ -41,11 +41,25 @@ export interface RenderOptions {
 	assigneeColor: (assignee: string) => string | null;
 }
 
+/** 表示範囲でバー期間を切り詰める。範囲外なら null */
+function clipSpan(
+	start: Date,
+	end: Date,
+	range: TimeRange
+): { s: Date; e: Date } | null {
+	if (end < range.start || start > range.end) return null;
+	return {
+		s: start < range.start ? range.start : start,
+		e: end > range.end ? range.end : end,
+	};
+}
+
 export function renderGantt(
 	container: HTMLElement,
 	model: GanttModel,
 	plans: PlanRow[],
 	scale: GanttScale,
+	range: TimeRange,
 	opts: RenderOptions
 ): void {
 	container.empty();
@@ -55,10 +69,6 @@ export function renderGantt(
 		return;
 	}
 
-	const range = computeRange([
-		...plans.map((p) => ({ start: p.start, due: p.end })),
-		...model.tasks,
-	]);
 	const ppd = PX_PER_DAY[scale];
 	const chartWidth = (range.days + 1) * ppd;
 	const planTop = HEADER_HEIGHT;
@@ -181,8 +191,10 @@ export function renderGantt(
 	// 全体予定のバー
 	plans.forEach((plan, i) => {
 		if (!plan.start || !plan.end) return;
-		const x = diffDays(range.start, plan.start) * ppd;
-		const w = Math.max((diffDays(plan.start, plan.end) + 1) * ppd, 4);
+		const span = clipSpan(plan.start, plan.end, range);
+		if (!span) return;
+		const x = diffDays(range.start, span.s) * ppd;
+		const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
 		const y = planTop + i * ROW_HEIGHT + BAR_PADDING;
 		const h = ROW_HEIGHT - BAR_PADDING * 2;
 		const bar = svg("rect", {
@@ -202,8 +214,10 @@ export function renderGantt(
 	// タスクバー
 	model.tasks.forEach((task, i) => {
 		if (!task.start || !task.due) return;
-		const x = diffDays(range.start, task.start) * ppd;
-		const w = Math.max((diffDays(task.start, task.due) + 1) * ppd, 4);
+		const span = clipSpan(task.start, task.due, range);
+		if (!span) return;
+		const x = diffDays(range.start, span.s) * ppd;
+		const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
 		const y = taskTop + i * ROW_HEIGHT + BAR_PADDING;
 		const h = ROW_HEIGHT - BAR_PADDING * 2;
 
@@ -242,11 +256,14 @@ export function renderGantt(
 		root.appendChild(group);
 	});
 
-	// 今日の縦線
-	const todayX = diffDays(range.start, new Date()) * ppd + ppd / 2;
-	root.appendChild(
-		svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
-	);
+	// 今日の縦線(表示範囲内のときだけ)
+	const today = new Date();
+	if (today >= range.start && diffDays(range.start, today) <= range.days) {
+		const todayX = diffDays(range.start, today) * ppd + ppd / 2;
+		root.appendChild(
+			svg("line", { x1: todayX, y1: 0, x2: todayX, y2: chartHeight, class: "rg-today" })
+		);
+	}
 
 	// ---- 日付未設定チケット ----
 	if (model.undated.length > 0) {

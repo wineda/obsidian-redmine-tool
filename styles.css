@@ -242,6 +242,23 @@
 	min-width: 160px;
 }
 
+/* ---- 表示期間コントロール ---- */
+.rg-range {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.rg-month-input {
+	font: inherit;
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 2px 6px;
+}
+
 /* ---- ツールバーの表示フィルタ類 ---- */
 .rg-check {
 	display: flex;

@@ -1,11 +1,5 @@
 import type { GanttScale } from "../settings";
 
-/** 期間を持つ表示要素(チケット・全体予定共通) */
-export interface DateSpan {
-	start: Date | null;
-	due: Date | null;
-}
-
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** スケールごとの1日あたりピクセル幅 */
@@ -20,7 +14,7 @@ export interface TimeRange {
 	start: Date;
 	/** チャート右端の日(この日を含む) */
 	end: Date;
-	/** 表示日数 */
+	/** 最終日のインデックス(0始まり。表示日数 - 1) */
 	days: number;
 }
 
@@ -38,18 +32,12 @@ export function diffDays(from: Date, to: Date): number {
 	return Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_PER_DAY);
 }
 
-/** タスク群から表示範囲を求める(前後に余白日を持たせる) */
-export function computeRange(tasks: DateSpan[]): TimeRange {
-	const today = startOfDay(new Date());
-	let min = today;
-	let max = today;
-	for (const t of tasks) {
-		if (t.start && t.start < min) min = startOfDay(t.start);
-		if (t.due && t.due > max) max = startOfDay(t.due);
-	}
-	const start = addDays(min, -7);
-	const end = addDays(max, 14);
-	return { start, end, days: diffDays(start, end) + 1 };
+/** 指定した開始月から months ヶ月分の表示範囲を作る */
+export function monthRange(year: number, month0: number, months: number): TimeRange {
+	const start = new Date(year, month0, 1);
+	// 翌月0日 = 対象最終月の末日
+	const end = new Date(year, month0 + months, 0);
+	return { start, end, days: diffDays(start, end) };
 }
 
 export interface Tick {
