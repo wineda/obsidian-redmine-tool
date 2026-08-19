@@ -12,8 +12,8 @@ const COLUMNS: { label: string; width: number; cls?: string }[] = [
 	{ label: "題名", width: 360 },
 	{ label: "ステータス", width: 120 },
 	{ label: "担当者", width: 110 },
-	{ label: "開始日", width: 96, cls: "rg-td-date" },
 	{ label: "状況", width: 104 },
+	{ label: "開始日", width: 96, cls: "rg-td-date" },
 	{ label: "期日", width: 96, cls: "rg-td-date" },
 	{ label: "納期", width: 96, cls: "rg-td-date" },
 	{ label: "進捗", width: 96 },
@@ -129,13 +129,7 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 		assigneeCell.addClass("rg-td-empty");
 	}
 
-	// 開始日 / 期日(フォールバック値は表示せずRedmineの生の値のみ)
-	row.createEl("td", {
-		cls: "rg-td-date",
-		text: task.start && !task.startIsFallback ? formatDate(task.start) : "-",
-	});
-
-	// 状況(現在日と期日/納期の比較)
+	// 状況(現在日と期日/納期の比較。2週間より先は表示しない)
 	const situationCell = row.createEl("td");
 	const situation = computeSituation(task);
 	if (situation) {
@@ -144,10 +138,13 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 			text: situation.text,
 		});
 		if (situation.title) el.setAttr("title", situation.title);
-	} else {
-		situationCell.setText("-");
-		situationCell.addClass("rg-td-empty");
 	}
+
+	// 開始日 / 期日(フォールバック値は表示せずRedmineの生の値のみ)
+	row.createEl("td", {
+		cls: "rg-td-date",
+		text: task.start && !task.startIsFallback ? formatDate(task.start) : "-",
+	});
 
 	row.createEl("td", {
 		cls: "rg-td-date",
@@ -183,15 +180,18 @@ function parseDeliveryDate(s: string): Date | null {
 	return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
+// この日数以内のとき「あとXX日」バッジを表示する(それより先は表示しない)
+const DUE_SOON_DAYS = 14;
+
 interface Situation {
 	text: string;
-	kind: "over" | "soon" | "normal";
+	kind: "over" | "soon";
 	title?: string;
 }
 
 /**
  * 現在日と期日(なければ納期)を比較した状況表示。
- * 完了チケット・比較対象の日付がないチケットは null
+ * 完了チケット・比較対象の日付がないチケット・2週間より先のチケットは null(表示なし)
  */
 function computeSituation(task: GanttTask): Situation | null {
 	if (task.isClosed) return null;
@@ -207,8 +207,9 @@ function computeSituation(task: GanttTask): Situation | null {
 	if (diff < 0) {
 		return { text: `${label}超過`, kind: "over", title: `${-diff}日超過 (${formatDate(target)})` };
 	}
+	if (diff > DUE_SOON_DAYS) return null;
 	if (diff === 0) {
 		return { text: `${label}本日`, kind: "soon" };
 	}
-	return { text: `${label}あと${diff}日`, kind: diff <= 3 ? "soon" : "normal" };
+	return { text: `${label}あと${diff}日`, kind: "soon" };
 }

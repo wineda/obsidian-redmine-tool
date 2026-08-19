@@ -590,12 +590,12 @@ body.rg-resizing {
 }
 
 .rg-due-soon {
-	color: var(--color-orange);
+	display: inline-block;
+	padding: 0 7px;
+	border-radius: 9px;
+	background: var(--color-orange);
+	color: #ffffff;
 	font-weight: 600;
-}
-
-.rg-due-normal {
-	color: var(--text-muted);
 }
 
 /* 進捗バー */
