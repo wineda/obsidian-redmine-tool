@@ -42,6 +42,16 @@ export default class RedmineGanttPlugin extends Plugin {
 
 	async loadSettings(): Promise<void> {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		// 旧バージョンの「プロジェクト」型フィルタは負荷対策で廃止したため読み捨てる
+		this.settings.filters = this.settings.filters.filter(
+			(f) => f.type === "parent" || f.type === "query"
+		);
+		if (
+			this.settings.activeFilter &&
+			!this.settings.filters.some((f) => f.name === this.settings.activeFilter)
+		) {
+			this.settings.activeFilter = "";
+		}
 	}
 
 	async saveSettings(): Promise<void> {

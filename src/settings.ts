@@ -3,15 +3,17 @@ import type RedmineGanttPlugin from "./main";
 
 export type GanttScale = "day" | "week" | "month";
 
-export type FilterType = "project" | "parent" | "query";
+export type FilterType = "parent" | "query";
 
-/** ガントビューのツールバーで切り替える表示条件 */
+/**
+ * ガントビューのツールバーで切り替える表示条件。
+ * 負荷対策として、プロジェクト全体の取得は提供しない。
+ */
 export interface GanttFilter {
 	name: string;
 	type: FilterType;
 	/**
-	 * project: プロジェクト識別子またはID
-	 * parent: 親チケットのID(その配下ツリー全体を表示)
+	 * parent: 親チケットのID(その配下ツリー全体を再帰的に取得して表示)
 	 * query: 保存クエリのID。プロジェクトスコープのクエリは「プロジェクト識別子:クエリID」
 	 */
 	value: string;
@@ -44,11 +46,10 @@ export interface PlanItem {
 export interface RedmineGanttSettings {
 	baseUrl: string;
 	apiKey: string;
-	projectId: string;
 	includeClosed: boolean;
 	defaultScale: GanttScale;
 	filters: GanttFilter[];
-	/** 選択中フィルタの name。空文字は既定(設定のプロジェクト) */
+	/** 選択中フィルタの name。空文字は未選択 */
 	activeFilter: string;
 	viewMode: ViewMode;
 	planItems: PlanItem[];
@@ -57,7 +58,6 @@ export interface RedmineGanttSettings {
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	baseUrl: "",
 	apiKey: "",
-	projectId: "",
 	includeClosed: false,
 	defaultScale: "week",
 	filters: [],
@@ -109,21 +109,6 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("プロジェクト")
-			.setDesc(
-				"表示するプロジェクトの識別子またはID(例: my-project)。空の場合は閲覧可能な全チケットを取得します。"
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("project-identifier")
-					.setValue(this.plugin.settings.projectId)
-					.onChange(async (value) => {
-						this.plugin.settings.projectId = value.trim();
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
 			.setName("完了チケットを含める")
 			.setDesc("オンにすると終了ステータスのチケットも表示します。")
 			.addToggle((toggle) =>
@@ -154,7 +139,8 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 			.setName("表示フィルタ")
 			.setHeading()
 			.setDesc(
-				"ガントビューのツールバーで切り替えられる表示条件。" +
+				"ガントビューで表示するチケットの取得条件。負荷を抑えるため、いずれかのフィルタの指定が必須です。" +
+					"「親チケット配下」は指定チケットの配下ツリー全体を再帰的に取得します。" +
 					"「保存クエリ」の値はクエリID(Redmineのチケット一覧URLの query_id= の数値)。" +
 					"プロジェクトスコープのクエリは「プロジェクト識別子:クエリID」の形式で指定します。"
 			);
@@ -184,7 +170,7 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 				)
 				.addText((text) =>
 					text
-						.setPlaceholder("識別子 / チケットID / クエリID")
+						.setPlaceholder("チケットID / クエリID")
 						.setValue(filter.value)
 						.onChange(async (value) => {
 							filter.value = value.trim();
@@ -207,7 +193,7 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 			button.setButtonText("フィルタを追加").onClick(async () => {
 				this.plugin.settings.filters.push({
 					name: "",
-					type: "project",
+					type: "parent",
 					value: "",
 				});
 				await this.plugin.saveSettings();

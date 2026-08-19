@@ -86,10 +86,6 @@ export class RedmineClient {
 		return response.json as T;
 	}
 
-	private statusParam(): string {
-		return this.settings.includeClosed ? "*" : "open";
-	}
-
 	/** 指定条件でチケットをページングしながら全件取得する */
 	private async fetchIssuesPaged(baseParams: Record<string, string>): Promise<RedmineIssue[]> {
 		const issues: RedmineIssue[] = [];
@@ -112,29 +108,13 @@ export class RedmineClient {
 
 	/**
 	 * 表示フィルタに応じて対象チケットを取得する。
-	 * filter が null のときは設定の既定プロジェクトを使う。
+	 * 負荷対策のためプロジェクト全体の取得は提供せず、フィルタの指定が必須。
 	 */
-	async fetchIssues(filter: GanttFilter | null): Promise<RedmineIssue[]> {
-		if (!filter || filter.type === "project") {
-			return this.fetchProjectIssues(filter ? filter.value : this.settings.projectId);
-		}
+	async fetchIssues(filter: GanttFilter): Promise<RedmineIssue[]> {
 		if (filter.type === "query") {
 			return this.fetchQueryIssues(filter.value);
 		}
 		return this.fetchSubtreeIssues(filter.value);
-	}
-
-	private fetchProjectIssues(projectId: string): Promise<RedmineIssue[]> {
-		const params: Record<string, string> = {
-			status_id: this.statusParam(),
-			sort: "start_date:asc,id:asc",
-		};
-		if (projectId) {
-			params.project_id = projectId;
-			// サブプロジェクトのチケットも含める
-			params.subproject_id = "*";
-		}
-		return this.fetchIssuesPaged(params);
 	}
 
 	/**

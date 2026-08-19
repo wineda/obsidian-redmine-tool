@@ -73,18 +73,23 @@ export class GanttView extends ItemView {
 		});
 
 		const filterSelect = toolbar.createEl("select", { cls: "dropdown rg-filter-select" });
-		const defaultOption = filterSelect.createEl("option", {
-			text: this.plugin.settings.projectId
-				? `既定 (${this.plugin.settings.projectId})`
-				: "既定 (全チケット)",
-		});
-		defaultOption.value = "";
-		for (const filter of this.plugin.settings.filters) {
-			if (!filter.name) continue;
-			const option = filterSelect.createEl("option", { text: filter.name });
-			option.value = filter.name;
+		const namedFilters = this.plugin.settings.filters.filter((f) => f.name);
+		if (namedFilters.length === 0) {
+			const option = filterSelect.createEl("option", { text: "(フィルタ未設定)" });
+			option.value = "";
+			filterSelect.disabled = true;
+		} else {
+			for (const filter of namedFilters) {
+				const option = filterSelect.createEl("option", { text: filter.name });
+				option.value = filter.name;
+			}
+			// 保存されている選択が無効なら先頭のフィルタにフォールバック
+			if (!this.activeFilter()) {
+				this.plugin.settings.activeFilter = namedFilters[0].name;
+				void this.plugin.saveSettings();
+			}
+			filterSelect.value = this.plugin.settings.activeFilter;
 		}
-		filterSelect.value = this.activeFilter() ? this.plugin.settings.activeFilter : "";
 		filterSelect.addEventListener("change", () => {
 			this.plugin.settings.activeFilter = filterSelect.value;
 			void this.plugin.saveSettings();
@@ -125,7 +130,7 @@ export class GanttView extends ItemView {
 		await this.refresh();
 	}
 
-	/** 選択中の表示フィルタ。既定(設定のプロジェクト)のときは null */
+	/** 選択中の表示フィルタ。未選択・無効なときは null */
 	private activeFilter(): GanttFilter | null {
 		const name = this.plugin.settings.activeFilter;
 		if (!name) return null;
@@ -140,11 +145,25 @@ export class GanttView extends ItemView {
 
 	async refresh(): Promise<void> {
 		if (this.loading || !this.chartEl) return;
+		const filter = this.activeFilter();
+		if (!filter) {
+			this.model = null;
+			this.setStatus("フィルタ未設定");
+			this.chartEl.empty();
+			this.chartEl.createDiv({
+				cls: "rg-empty",
+				text:
+					"表示フィルタが設定されていません。\n" +
+					"設定 → Redmine Gantt → 「表示フィルタ」で、親チケット配下または保存クエリのフィルタを追加してください。\n" +
+					"(負荷を抑えるため、プロジェクト全体の一括取得は行いません)",
+			});
+			return;
+		}
 		this.loading = true;
 		this.setStatus("取得中…");
 		try {
 			const client = new RedmineClient(this.plugin.settings);
-			const issues = await client.fetchIssues(this.activeFilter());
+			const issues = await client.fetchIssues(filter);
 			this.model = buildGanttModel(issues);
 			this.renderChart();
 			const now = new Date();
