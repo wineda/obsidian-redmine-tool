@@ -320,8 +320,16 @@ export class GanttView extends ItemView {
 		return issues;
 	}
 
-	/** 担当者絞り込みモード時の担当者→色。モード無効・対象外は null */
+	/**
+	 * 担当者→表示色。
+	 * 設定の固定色が最優先(フィルタや絞り込みの選択にかかわらず常に適用)。
+	 * 次に担当者絞り込みモードの自動配色。どちらも該当しなければ null
+	 */
 	private assigneeColor(assignee: string): string | null {
+		const fixed = this.plugin.settings.assigneeColors.find(
+			(entry) => entry.name !== "" && entry.name === assignee
+		);
+		if (fixed) return fixed.color;
 		if (this.selectedAssignees.size === 0) return null;
 		const sorted = Array.from(this.selectedAssignees).sort();
 		const index = sorted.indexOf(assignee);

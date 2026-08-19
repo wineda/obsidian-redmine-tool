@@ -21,6 +21,14 @@ export interface GanttFilter {
 
 export type ViewMode = "gantt" | "table";
 
+/** 担当者の固定色。フィルタや絞り込みの選択にかかわらず常にこの色で表示する */
+export interface AssigneeColor {
+	/** Redmine上の表示名と完全一致させる */
+	name: string;
+	/** "#rrggbb" */
+	color: string;
+}
+
 export type PlanStatus = "todo" | "doing" | "done";
 
 export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
@@ -52,6 +60,7 @@ export interface RedmineGanttSettings {
 	activeFilter: string;
 	viewMode: ViewMode;
 	planItems: PlanItem[];
+	assigneeColors: AssigneeColor[];
 }
 
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
@@ -62,6 +71,7 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	activeFilter: "",
 	viewMode: "gantt",
 	planItems: [],
+	assigneeColors: [],
 };
 
 export class RedmineGanttSettingTab extends PluginSettingTab {
@@ -182,6 +192,51 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 					type: "parent",
 					value: "",
 				});
+				await this.plugin.saveSettings();
+				this.display();
+			})
+		);
+
+		new Setting(containerEl)
+			.setName("担当者の色分け")
+			.setHeading()
+			.setDesc(
+				"登録した担当者は、表示フィルタや担当者絞り込みの選択にかかわらず常にこの色で表示されます" +
+					"(ガントのバー・テーブルの担当者チップ)。名前はRedmine上の表示名と完全一致で指定してください。"
+			);
+
+		this.plugin.settings.assigneeColors.forEach((entry) => {
+			new Setting(containerEl)
+				.addText((text) =>
+					text
+						.setPlaceholder("担当者名(Redmineの表示名)")
+						.setValue(entry.name)
+						.onChange(async (value) => {
+							entry.name = value.trim();
+							await this.plugin.saveSettings();
+						})
+				)
+				.addColorPicker((picker) =>
+					picker.setValue(entry.color).onChange(async (value) => {
+						entry.color = value;
+						await this.plugin.saveSettings();
+					})
+				)
+				.addExtraButton((button) =>
+					button
+						.setIcon("trash")
+						.setTooltip("削除")
+						.onClick(async () => {
+							this.plugin.settings.assigneeColors.remove(entry);
+							await this.plugin.saveSettings();
+							this.display();
+						})
+				);
+		});
+
+		new Setting(containerEl).addButton((button) =>
+			button.setButtonText("担当者を追加").onClick(async () => {
+				this.plugin.settings.assigneeColors.push({ name: "", color: "#3f7fd9" });
 				await this.plugin.saveSettings();
 				this.display();
 			})

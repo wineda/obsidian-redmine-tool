@@ -43,7 +43,8 @@ var DEFAULT_SETTINGS = {
   filters: [],
   activeFilter: "",
   viewMode: "gantt",
-  planItems: []
+  planItems: [],
+  assigneeColors: []
 };
 var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -109,6 +110,35 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
           type: "parent",
           value: ""
         });
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u62C5\u5F53\u8005\u306E\u8272\u5206\u3051").setHeading().setDesc(
+      "\u767B\u9332\u3057\u305F\u62C5\u5F53\u8005\u306F\u3001\u8868\u793A\u30D5\u30A3\u30EB\u30BF\u3084\u62C5\u5F53\u8005\u7D5E\u308A\u8FBC\u307F\u306E\u9078\u629E\u306B\u304B\u304B\u308F\u3089\u305A\u5E38\u306B\u3053\u306E\u8272\u3067\u8868\u793A\u3055\u308C\u307E\u3059(\u30AC\u30F3\u30C8\u306E\u30D0\u30FC\u30FB\u30C6\u30FC\u30D6\u30EB\u306E\u62C5\u5F53\u8005\u30C1\u30C3\u30D7)\u3002\u540D\u524D\u306FRedmine\u4E0A\u306E\u8868\u793A\u540D\u3068\u5B8C\u5168\u4E00\u81F4\u3067\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+    );
+    this.plugin.settings.assigneeColors.forEach((entry) => {
+      new import_obsidian.Setting(containerEl).addText(
+        (text) => text.setPlaceholder("\u62C5\u5F53\u8005\u540D(Redmine\u306E\u8868\u793A\u540D)").setValue(entry.name).onChange(async (value) => {
+          entry.name = value.trim();
+          await this.plugin.saveSettings();
+        })
+      ).addColorPicker(
+        (picker) => picker.setValue(entry.color).onChange(async (value) => {
+          entry.color = value;
+          await this.plugin.saveSettings();
+        })
+      ).addExtraButton(
+        (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(async () => {
+          this.plugin.settings.assigneeColors.remove(entry);
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+    });
+    new import_obsidian.Setting(containerEl).addButton(
+      (button) => button.setButtonText("\u62C5\u5F53\u8005\u3092\u8FFD\u52A0").onClick(async () => {
+        this.plugin.settings.assigneeColors.push({ name: "", color: "#3f7fd9" });
         await this.plugin.saveSettings();
         this.display();
       })
@@ -1517,8 +1547,17 @@ var GanttView = class extends import_obsidian6.ItemView {
     }
     return issues;
   }
-  /** 担当者絞り込みモード時の担当者→色。モード無効・対象外は null */
+  /**
+   * 担当者→表示色。
+   * 設定の固定色が最優先(フィルタや絞り込みの選択にかかわらず常に適用)。
+   * 次に担当者絞り込みモードの自動配色。どちらも該当しなければ null
+   */
   assigneeColor(assignee) {
+    const fixed = this.plugin.settings.assigneeColors.find(
+      (entry) => entry.name !== "" && entry.name === assignee
+    );
+    if (fixed)
+      return fixed.color;
     if (this.selectedAssignees.size === 0)
       return null;
     const sorted = Array.from(this.selectedAssignees).sort();
