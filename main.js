@@ -873,6 +873,9 @@ function svg(tag, attrs = {}) {
   }
   return el;
 }
+function rowHeightFor(fontSize) {
+  return Math.max(16, Math.round(fontSize * 2));
+}
 function clipSpan(start, end, range) {
   if (end < range.start || start > range.end)
     return null;
@@ -890,7 +893,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   const ppd = PX_PER_DAY[scale];
   const chartWidth = (range.days + 1) * ppd;
-  const rowHeight = Math.max(16, Math.round(opts.fontSize * 2));
+  const rowHeight = rowHeightFor(opts.fontSize);
   const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
   const datedPlans = plans.filter((p) => p.start !== null && p.end !== null).sort((a, b) => a.start.getTime() - b.start.getTime());
   const laneEnds = [];
@@ -1252,6 +1255,7 @@ function renderTable(container, model, opts) {
 }
 function renderRow(tbody, task, opts) {
   const row = tbody.createEl("tr");
+  row.style.height = `${rowHeightFor(opts.fontSize)}px`;
   if (task.isClosed)
     row.addClass("rg-row-closed");
   if (task.isContext)
