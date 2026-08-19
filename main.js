@@ -86,7 +86,7 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         })
       ).addDropdown(
-        (dropdown) => dropdown.addOption("project", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8").addOption("parent", "\u89AA\u30C1\u30B1\u30C3\u30C8\u914D\u4E0B").addOption("query", "\u4FDD\u5B58\u30AF\u30A8\u30EA").setValue(filter.type).onChange(async (value) => {
+        (dropdown) => dropdown.addOption("parent", "\u89AA\u30C1\u30B1\u30C3\u30C8\u914D\u4E0B").addOption("query", "\u4FDD\u5B58\u30AF\u30A8\u30EA").setValue(filter.type).onChange(async (value) => {
           filter.type = value;
           await this.plugin.saveSettings();
         })

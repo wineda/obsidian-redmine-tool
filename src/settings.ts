@@ -155,7 +155,6 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 				)
 				.addDropdown((dropdown) =>
 					dropdown
-						.addOption("project", "プロジェクト")
 						.addOption("parent", "親チケット配下")
 						.addOption("query", "保存クエリ")
 						.setValue(filter.type)
