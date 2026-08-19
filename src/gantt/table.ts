@@ -1,6 +1,7 @@
 import { setIcon } from "obsidian";
 import type { GanttModel, GanttTask } from "../redmine/mapper";
 import { formatDate, RenderOptions } from "./renderer";
+import { diffDays } from "./scale";
 
 const INDENT = 16;
 const MIN_COL_WIDTH = 48;
@@ -12,6 +13,7 @@ const COLUMNS: { label: string; width: number; cls?: string }[] = [
 	{ label: "ステータス", width: 120 },
 	{ label: "担当者", width: 110 },
 	{ label: "開始日", width: 96, cls: "rg-td-date" },
+	{ label: "状況", width: 104 },
 	{ label: "期日", width: 96, cls: "rg-td-date" },
 	{ label: "納期", width: 96, cls: "rg-td-date" },
 	{ label: "進捗", width: 96 },
@@ -132,6 +134,21 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 		cls: "rg-td-date",
 		text: task.start && !task.startIsFallback ? formatDate(task.start) : "-",
 	});
+
+	// 状況(現在日と期日/納期の比較)
+	const situationCell = row.createEl("td");
+	const situation = computeSituation(task);
+	if (situation) {
+		const el = situationCell.createSpan({
+			cls: `rg-due rg-due-${situation.kind}`,
+			text: situation.text,
+		});
+		if (situation.title) el.setAttr("title", situation.title);
+	} else {
+		situationCell.setText("-");
+		situationCell.addClass("rg-td-empty");
+	}
+
 	row.createEl("td", {
 		cls: "rg-td-date",
 		text: task.due && !task.dueIsFallback ? formatDate(task.due) : "-",
@@ -157,4 +174,41 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 		btn.setAttr("aria-label", `#${task.id} を編集`);
 		btn.addEventListener("click", () => opts.onEdit!(task.id));
 	}
+}
+
+/** "YYYY-MM-DD" 形式の納期文字列を日付として解釈する */
+function parseDeliveryDate(s: string): Date | null {
+	const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (!m) return null;
+	return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+interface Situation {
+	text: string;
+	kind: "over" | "soon" | "normal";
+	title?: string;
+}
+
+/**
+ * 現在日と期日(なければ納期)を比較した状況表示。
+ * 完了チケット・比較対象の日付がないチケットは null
+ */
+function computeSituation(task: GanttTask): Situation | null {
+	if (task.isClosed) return null;
+	const due = task.due && !task.dueIsFallback ? task.due : null;
+	const delivery = parseDeliveryDate(task.delivery);
+	const label = due ? "期日" : delivery ? "納期" : null;
+	const target = due ?? delivery;
+	if (!label || !target) return null;
+
+	const now = new Date();
+	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	const diff = diffDays(today, target);
+	if (diff < 0) {
+		return { text: `${label}超過`, kind: "over", title: `${-diff}日超過 (${formatDate(target)})` };
+	}
+	if (diff === 0) {
+		return { text: `${label}本日`, kind: "soon" };
+	}
+	return { text: `${label}あと${diff}日`, kind: diff <= 3 ? "soon" : "normal" };
 }

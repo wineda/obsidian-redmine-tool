@@ -1097,6 +1097,7 @@ var COLUMNS = [
   { label: "\u30B9\u30C6\u30FC\u30BF\u30B9", width: 120 },
   { label: "\u62C5\u5F53\u8005", width: 110 },
   { label: "\u958B\u59CB\u65E5", width: 96, cls: "rg-td-date" },
+  { label: "\u72B6\u6CC1", width: 104 },
   { label: "\u671F\u65E5", width: 96, cls: "rg-td-date" },
   { label: "\u7D0D\u671F", width: 96, cls: "rg-td-date" },
   { label: "\u9032\u6357", width: 96 },
@@ -1189,6 +1190,19 @@ function renderRow(tbody, task, opts) {
     cls: "rg-td-date",
     text: task.start && !task.startIsFallback ? formatDate(task.start) : "-"
   });
+  const situationCell = row.createEl("td");
+  const situation = computeSituation(task);
+  if (situation) {
+    const el = situationCell.createSpan({
+      cls: `rg-due rg-due-${situation.kind}`,
+      text: situation.text
+    });
+    if (situation.title)
+      el.setAttr("title", situation.title);
+  } else {
+    situationCell.setText("-");
+    situationCell.addClass("rg-td-empty");
+  }
   row.createEl("td", {
     cls: "rg-td-date",
     text: task.due && !task.dueIsFallback ? formatDate(task.due) : "-"
@@ -1209,6 +1223,32 @@ function renderRow(tbody, task, opts) {
     btn.setAttr("aria-label", `#${task.id} \u3092\u7DE8\u96C6`);
     btn.addEventListener("click", () => opts.onEdit(task.id));
   }
+}
+function parseDeliveryDate(s) {
+  const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m)
+    return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+function computeSituation(task) {
+  if (task.isClosed)
+    return null;
+  const due = task.due && !task.dueIsFallback ? task.due : null;
+  const delivery = parseDeliveryDate(task.delivery);
+  const label = due ? "\u671F\u65E5" : delivery ? "\u7D0D\u671F" : null;
+  const target = due != null ? due : delivery;
+  if (!label || !target)
+    return null;
+  const now = /* @__PURE__ */ new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = diffDays(today, target);
+  if (diff < 0) {
+    return { text: `${label}\u8D85\u904E`, kind: "over", title: `${-diff}\u65E5\u8D85\u904E (${formatDate(target)})` };
+  }
+  if (diff === 0) {
+    return { text: `${label}\u672C\u65E5`, kind: "soon" };
+  }
+  return { text: `${label}\u3042\u3068${diff}\u65E5`, kind: diff <= 3 ? "soon" : "normal" };
 }
 
 // src/gantt/GanttView.ts

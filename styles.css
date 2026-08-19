@@ -394,7 +394,8 @@
 	border-collapse: separate;
 	border-spacing: 0;
 	table-layout: fixed;
-	font-size: var(--font-ui-small);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.35;
 }
 
 .rg-table th,
@@ -414,12 +415,12 @@
 	color: var(--text-muted);
 	font-weight: 600;
 	font-size: var(--font-ui-smaller);
-	padding: 8px 10px;
+	padding: 5px 8px;
 	border-bottom: 2px solid var(--background-modifier-border);
 }
 
 .rg-table td {
-	padding: 6px 10px;
+	padding: 2px 8px;
 	border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 
@@ -498,8 +499,8 @@ body.rg-resizing {
 	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	padding: 1px 9px;
-	border-radius: 10px;
+	padding: 0 7px;
+	border-radius: 9px;
 	font-size: var(--font-ui-smaller);
 	background: var(--background-secondary);
 	border: 1px solid var(--background-modifier-border);
@@ -529,8 +530,8 @@ body.rg-resizing {
 	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	padding: 1px 9px;
-	border-radius: 10px;
+	padding: 0 7px;
+	border-radius: 9px;
 	font-size: var(--font-ui-smaller);
 	background: var(--background-secondary);
 }
@@ -552,7 +553,7 @@ body.rg-resizing {
 .rg-edit-btn {
 	display: inline-flex;
 	align-items: center;
-	padding: 3px 6px;
+	padding: 1px 4px;
 	background: transparent;
 	border: none;
 	box-shadow: none;
@@ -573,6 +574,30 @@ body.rg-resizing {
 	margin-bottom: 12px;
 }
 
+/* 状況(期日/納期との比較) */
+.rg-due {
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+}
+
+.rg-due-over {
+	display: inline-block;
+	padding: 0 7px;
+	border-radius: 9px;
+	background: var(--color-red);
+	color: #ffffff;
+	font-weight: 600;
+}
+
+.rg-due-soon {
+	color: var(--color-orange);
+	font-weight: 600;
+}
+
+.rg-due-normal {
+	color: var(--text-muted);
+}
+
 /* 進捗バー */
 .rg-ratio-wrap {
 	display: flex;
@@ -582,7 +607,7 @@ body.rg-resizing {
 
 .rg-progress {
 	flex: 1 1 auto;
-	height: 8px;
+	height: 6px;
 	border-radius: 4px;
 	background: var(--background-secondary);
 	border: 1px solid var(--background-modifier-border-hover);
@@ -602,7 +627,7 @@ body.rg-resizing {
 
 .rg-progress-text {
 	flex: 0 0 auto;
-	width: 36px;
+	width: 32px;
 	text-align: right;
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
