@@ -1,6 +1,6 @@
 import { setIcon } from "obsidian";
 import type { GanttModel, GanttTask } from "../redmine/mapper";
-import { formatDate, RenderOptions } from "./renderer";
+import { formatDate, RenderOptions, rowHeightFor } from "./renderer";
 import { diffDays } from "./scale";
 
 const INDENT = 16;
@@ -85,6 +85,8 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 
 function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): void {
 	const row = tbody.createEl("tr");
+	// ガントチャートの行と同じ高さにそろえる
+	row.style.height = `${rowHeightFor(opts.fontSize)}px`;
 	if (task.isClosed) row.addClass("rg-row-closed");
 	if (task.isContext) row.addClass("rg-row-context");
 

@@ -47,6 +47,11 @@ export interface RenderOptions {
 	onLeftWidthChange?: (width: number) => void;
 }
 
+/** 文字サイズに応じた行の高さ(px)。ガントとテーブル表示で共通 */
+export function rowHeightFor(fontSize: number): number {
+	return Math.max(16, Math.round(fontSize * 2));
+}
+
 /** 表示範囲でバー期間を切り詰める。範囲外なら null */
 function clipSpan(
 	start: Date,
@@ -78,7 +83,7 @@ export function renderGantt(
 	const ppd = PX_PER_DAY[scale];
 	const chartWidth = (range.days + 1) * ppd;
 	// 文字サイズに応じて行の高さ・バーの余白を連動させる
-	const rowHeight = Math.max(16, Math.round(opts.fontSize * 2));
+	const rowHeight = rowHeightFor(opts.fontSize);
 	const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
 
 	// 全体予定を重ならないようにレーンへ詰める(日付のない予定はチャートに出せないため除外)
