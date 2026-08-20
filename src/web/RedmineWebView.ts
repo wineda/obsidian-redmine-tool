@@ -39,6 +39,11 @@ export class RedmineWebView extends ItemView {
 	async onOpen(): Promise<void> {
 		this.contentEl.empty();
 		this.contentEl.addClass("rg-web-view");
+		// webviewの height: 100% は親のレイアウト次第で潰れることがあるため、
+		// ペイン全体への絶対配置で常に埋める(CSS未更新の環境でも効くようインライン指定)
+		this.contentEl.style.padding = "0";
+		this.contentEl.style.position = "relative";
+		this.contentEl.style.overflow = "hidden";
 
 		if (!Platform.isDesktopApp) {
 			this.contentEl.createDiv({
@@ -58,6 +63,10 @@ export class RedmineWebView extends ItemView {
 		webview.setAttribute("allowpopups", "true");
 		if (this.currentUrl) webview.setAttribute("src", this.currentUrl);
 		webview.addClass("rg-webview");
+		webview.style.position = "absolute";
+		webview.style.inset = "0";
+		webview.style.width = "100%";
+		webview.style.height = "100%";
 		this.contentEl.appendChild(webview);
 		this.webviewEl = webview;
 	}
