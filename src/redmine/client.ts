@@ -312,9 +312,16 @@ export class RedmineClient {
 		return result;
 	}
 
-	/** チケットを1件取得する(編集モーダルで最新状態を表示するために使う) */
+	/**
+	 * チケットを1件取得する(編集モーダルで最新状態を表示するために使う)。
+	 * 子チケットの有無で編集可否を判定するため children を含めて取得する
+	 */
 	async fetchIssue(issueId: number): Promise<RedmineIssue> {
-		const res = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${issueId}.json`);
+		const res = await this.request<{ issue: RedmineIssue }>(
+			"GET",
+			`/issues/${issueId}.json`,
+			{ include: "children" }
+		);
 		return res.issue;
 	}
 

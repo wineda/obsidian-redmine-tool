@@ -442,9 +442,16 @@ ${details || "\u5165\u529B\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060
     }
     return result;
   }
-  /** チケットを1件取得する(編集モーダルで最新状態を表示するために使う) */
+  /**
+   * チケットを1件取得する(編集モーダルで最新状態を表示するために使う)。
+   * 子チケットの有無で編集可否を判定するため children を含めて取得する
+   */
   async fetchIssue(issueId) {
-    const res = await this.request("GET", `/issues/${issueId}.json`);
+    const res = await this.request(
+      "GET",
+      `/issues/${issueId}.json`,
+      { include: "children" }
+    );
     return res.issue;
   }
   /** 全ステータスの一覧。ワークフロー上の遷移可否は含まれない(不可な遷移は更新時に422で返る) */
@@ -592,6 +599,8 @@ var IssueEditModal = class extends import_obsidian3.Modal {
     this.doneRatio = 0;
     this.deliveryFieldId = null;
     this.errorEl = null;
+    /** 子チケットを持つ親チケットか。開始日・期日・進捗率は子から自動算出のため編集不可にする */
+    this.hasChildren = false;
     this.client = client;
     this.issueId = issueId;
     this.onSaved = onSaved;
@@ -625,17 +634,18 @@ var IssueEditModal = class extends import_obsidian3.Modal {
   }
   /** チケットの現在値をフォームの入力値へ反映する */
   applyIssue(issue) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     this.issue = issue;
+    this.hasChildren = ((_b = (_a = issue.children) == null ? void 0 : _a.length) != null ? _b : 0) > 0;
     this.statusId = issue.status.id;
     this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
-    this.startDate = (_a = issue.start_date) != null ? _a : "";
-    this.dueDate = (_b = issue.due_date) != null ? _b : "";
-    this.doneRatio = (_c = issue.done_ratio) != null ? _c : 0;
-    const deliveryField = (_d = issue.custom_fields) == null ? void 0 : _d.find((f) => f.name === DELIVERY_FIELD_NAME);
+    this.startDate = (_c = issue.start_date) != null ? _c : "";
+    this.dueDate = (_d = issue.due_date) != null ? _d : "";
+    this.doneRatio = (_e = issue.done_ratio) != null ? _e : 0;
+    const deliveryField = (_f = issue.custom_fields) == null ? void 0 : _f.find((f) => f.name === DELIVERY_FIELD_NAME);
     if (deliveryField) {
       this.deliveryFieldId = deliveryField.id;
-      this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_e = deliveryField.value) != null ? _e : "";
+      this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_g = deliveryField.value) != null ? _g : "";
     } else {
       this.deliveryFieldId = null;
       this.delivery = "";
@@ -669,18 +679,25 @@ var IssueEditModal = class extends import_obsidian3.Modal {
         this.assigneeId = value;
       });
     });
-    new import_obsidian3.Setting(contentEl).setName("\u958B\u59CB\u65E5").addText((text) => {
+    const derivedNote = "\u5B50\u30C1\u30B1\u30C3\u30C8\u304B\u3089\u81EA\u52D5\u7B97\u51FA\u3055\u308C\u308B\u305F\u3081\u7DE8\u96C6\u3067\u304D\u307E\u305B\u3093";
+    const startSetting = new import_obsidian3.Setting(contentEl).setName("\u958B\u59CB\u65E5").addText((text) => {
       text.inputEl.type = "date";
+      text.setDisabled(this.hasChildren);
       text.setValue(this.startDate).onChange((value) => {
         this.startDate = value;
       });
     });
-    new import_obsidian3.Setting(contentEl).setName("\u671F\u65E5").addText((text) => {
+    if (this.hasChildren)
+      startSetting.setDesc(derivedNote);
+    const dueSetting = new import_obsidian3.Setting(contentEl).setName("\u671F\u65E5").addText((text) => {
       text.inputEl.type = "date";
+      text.setDisabled(this.hasChildren);
       text.setValue(this.dueDate).onChange((value) => {
         this.dueDate = value;
       });
     });
+    if (this.hasChildren)
+      dueSetting.setDesc(derivedNote);
     if (this.deliveryFieldId !== null) {
       new import_obsidian3.Setting(contentEl).setName("\u7D0D\u671F").addText((text) => {
         text.inputEl.type = "date";
@@ -689,14 +706,21 @@ var IssueEditModal = class extends import_obsidian3.Modal {
         });
       });
     }
-    new import_obsidian3.Setting(contentEl).setName("\u9032\u6357\u7387").addDropdown((dropdown) => {
-      for (let ratio = 0; ratio <= 100; ratio += 10) {
+    const ratioSetting = new import_obsidian3.Setting(contentEl).setName("\u9032\u6357\u7387").addDropdown((dropdown) => {
+      const ratios = /* @__PURE__ */ new Set();
+      for (let ratio = 0; ratio <= 100; ratio += 10)
+        ratios.add(ratio);
+      ratios.add(this.doneRatio);
+      for (const ratio of Array.from(ratios).sort((a, b) => a - b)) {
         dropdown.addOption(String(ratio), `${ratio}%`);
       }
+      dropdown.setDisabled(this.hasChildren);
       dropdown.setValue(String(this.doneRatio)).onChange((value) => {
         this.doneRatio = Number(value);
       });
     });
+    if (this.hasChildren)
+      ratioSetting.setDesc(derivedNote);
     this.errorEl = contentEl.createDiv({ cls: "rg-error rg-edit-error" });
     this.errorEl.hide();
     new import_obsidian3.Setting(contentEl).addButton(
@@ -752,12 +776,14 @@ var IssueEditModal = class extends import_obsidian3.Modal {
     if (this.assigneeId !== currentAssignee) {
       payload.assigned_to_id = this.assigneeId === "" ? "" : Number(this.assigneeId);
     }
-    if (this.startDate !== ((_a = issue.start_date) != null ? _a : ""))
-      payload.start_date = this.startDate;
-    if (this.dueDate !== ((_b = issue.due_date) != null ? _b : ""))
-      payload.due_date = this.dueDate;
-    if (((_c = this.doneRatio) != null ? _c : 0) !== ((_d = issue.done_ratio) != null ? _d : 0))
-      payload.done_ratio = this.doneRatio;
+    if (!this.hasChildren) {
+      if (this.startDate !== ((_a = issue.start_date) != null ? _a : ""))
+        payload.start_date = this.startDate;
+      if (this.dueDate !== ((_b = issue.due_date) != null ? _b : ""))
+        payload.due_date = this.dueDate;
+      if (((_c = this.doneRatio) != null ? _c : 0) !== ((_d = issue.done_ratio) != null ? _d : 0))
+        payload.done_ratio = this.doneRatio;
+    }
     if (this.deliveryFieldId !== null) {
       const field = (_e = issue.custom_fields) == null ? void 0 : _e.find((f) => f.id === this.deliveryFieldId);
       const current = Array.isArray(field == null ? void 0 : field.value) ? field.value.join(", ") : (_f = field == null ? void 0 : field.value) != null ? _f : "";
