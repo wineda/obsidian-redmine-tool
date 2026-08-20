@@ -582,6 +582,27 @@ function buildGanttModel(issues, contextIds) {
 
 // src/issue/IssueEditModal.ts
 var import_obsidian3 = require("obsidian");
+var MemberSuggest = class extends import_obsidian3.AbstractInputSuggest {
+  constructor(app, textInputEl, members, onPick) {
+    super(app, textInputEl);
+    this.textInputEl = textInputEl;
+    this.members = members;
+    this.onPick = onPick;
+  }
+  getSuggestions(query) {
+    const q = query.trim().toLowerCase();
+    const hits = this.members.filter((member) => member.name.toLowerCase().includes(q));
+    return q === "" ? [null, ...hits] : hits;
+  }
+  renderSuggestion(member, el) {
+    el.setText(member ? member.name : "(\u672A\u5272\u5F53)");
+  }
+  selectSuggestion(member) {
+    this.textInputEl.value = member ? member.name : "";
+    this.onPick(member);
+    this.close();
+  }
+};
 var IssueEditModal = class extends import_obsidian3.Modal {
   constructor(app, client, issueId, onSaved) {
     super(app);
@@ -670,13 +691,26 @@ var IssueEditModal = class extends import_obsidian3.Modal {
         this.statusId = Number(value);
       });
     });
-    new import_obsidian3.Setting(contentEl).setName("\u62C5\u5F53\u8005").addDropdown((dropdown) => {
-      dropdown.addOption("", "(\u672A\u5272\u5F53)");
-      for (const member of this.members) {
-        dropdown.addOption(String(member.id), member.name);
-      }
-      dropdown.setValue(this.assigneeId).onChange((value) => {
-        this.assigneeId = value;
+    new import_obsidian3.Setting(contentEl).setName("\u62C5\u5F53\u8005").setDesc("\u540D\u524D\u306E\u4E00\u90E8\u3092\u5165\u529B\u3057\u3066\u691C\u7D22").addText((text) => {
+      const current = this.members.find((m) => String(m.id) === this.assigneeId);
+      text.setPlaceholder("(\u672A\u5272\u5F53)");
+      text.setValue(current ? current.name : "");
+      new MemberSuggest(this.app, text.inputEl, this.members, (member) => {
+        this.assigneeId = member ? String(member.id) : "";
+      });
+      text.inputEl.addEventListener("blur", () => {
+        const value = text.inputEl.value.trim();
+        if (value === "") {
+          this.assigneeId = "";
+          return;
+        }
+        const hit = this.members.find((m) => m.name === value);
+        if (hit) {
+          this.assigneeId = String(hit.id);
+          return;
+        }
+        const selected = this.members.find((m) => String(m.id) === this.assigneeId);
+        text.setValue(selected ? selected.name : "");
       });
     });
     const derivedNote = "\u5B50\u30C1\u30B1\u30C3\u30C8\u304B\u3089\u81EA\u52D5\u7B97\u51FA\u3055\u308C\u308B\u305F\u3081\u7DE8\u96C6\u3067\u304D\u307E\u305B\u3093";

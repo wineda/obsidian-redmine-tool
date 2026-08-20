@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { AbstractInputSuggest, App, Modal, Notice, Setting } from "obsidian";
 import { RedmineClient } from "../redmine/client";
 import { DELIVERY_FIELD_NAME } from "../redmine/mapper";
 import type {
@@ -7,6 +7,38 @@ import type {
 	RedmineIssueUpdate,
 	RedmineNamedRef,
 } from "../redmine/types";
+
+/** 「未割当」を表すサジェスト項目(nullで表現) */
+type MemberOption = RedmineNamedRef | null;
+
+/** 担当者入力欄のインクリメンタル検索サジェスト(名前の部分一致) */
+class MemberSuggest extends AbstractInputSuggest<MemberOption> {
+	constructor(
+		app: App,
+		private textInputEl: HTMLInputElement,
+		private members: RedmineNamedRef[],
+		private onPick: (member: MemberOption) => void
+	) {
+		super(app, textInputEl);
+	}
+
+	getSuggestions(query: string): MemberOption[] {
+		const q = query.trim().toLowerCase();
+		const hits = this.members.filter((member) => member.name.toLowerCase().includes(q));
+		// 空欄のときは未割当も選択肢として先頭に出す
+		return q === "" ? [null, ...hits] : hits;
+	}
+
+	renderSuggestion(member: MemberOption, el: HTMLElement): void {
+		el.setText(member ? member.name : "(未割当)");
+	}
+
+	selectSuggestion(member: MemberOption): void {
+		this.textInputEl.value = member ? member.name : "";
+		this.onPick(member);
+		this.close();
+	}
+}
 
 /**
  * チケット編集モーダル。
@@ -119,15 +151,33 @@ export class IssueEditModal extends Modal {
 			});
 		});
 
-		new Setting(contentEl).setName("担当者").addDropdown((dropdown) => {
-			dropdown.addOption("", "(未割当)");
-			for (const member of this.members) {
-				dropdown.addOption(String(member.id), member.name);
-			}
-			dropdown.setValue(this.assigneeId).onChange((value) => {
-				this.assigneeId = value;
+		new Setting(contentEl)
+			.setName("担当者")
+			.setDesc("名前の一部を入力して検索")
+			.addText((text) => {
+				const current = this.members.find((m) => String(m.id) === this.assigneeId);
+				text.setPlaceholder("(未割当)");
+				text.setValue(current ? current.name : "");
+				new MemberSuggest(this.app, text.inputEl, this.members, (member) => {
+					this.assigneeId = member ? String(member.id) : "";
+				});
+				// サジェストを選ばずに手入力したままの場合の確定処理:
+				// 空欄→未割当、名前と完全一致→その人、それ以外→変更前の表示に戻す
+				text.inputEl.addEventListener("blur", () => {
+					const value = text.inputEl.value.trim();
+					if (value === "") {
+						this.assigneeId = "";
+						return;
+					}
+					const hit = this.members.find((m) => m.name === value);
+					if (hit) {
+						this.assigneeId = String(hit.id);
+						return;
+					}
+					const selected = this.members.find((m) => String(m.id) === this.assigneeId);
+					text.setValue(selected ? selected.name : "");
+				});
 			});
-		});
 
 		const derivedNote = "子チケットから自動算出されるため編集できません";
 
