@@ -765,6 +765,20 @@ body.rg-resizing {
 	font-variant-numeric: tabular-nums;
 }
 
+/* ---- Redmineビュー(webview) ---- */
+.rg-web-view {
+	padding: 0;
+	overflow: hidden;
+}
+
+.rg-webview {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: none;
+	background: #ffffff;
+}
+
 /* ---- メッセージ ---- */
 .rg-empty,
 .rg-error {

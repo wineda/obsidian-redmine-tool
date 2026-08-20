@@ -63,6 +63,8 @@ export interface RedmineGanttSettings {
 	assigneeColors: AssigneeColor[];
 	/** テーブルの文字サイズ(px)。行の高さも連動する */
 	tableFontSize: number;
+	/** 右クリックメニューからObsidian内のRedmineビューで開けるようにする */
+	openIssueInWebView: boolean;
 }
 
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
@@ -75,6 +77,7 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	planItems: [],
 	assigneeColors: [],
 	tableFontSize: 11,
+	openIssueInWebView: true,
 };
 
 export class RedmineGanttSettingTab extends PluginSettingTab {
@@ -157,6 +160,23 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						this.plugin.refreshGanttViews();
 						this.display();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Redmineビューで開く")
+			.setDesc(
+				"テーブルの右クリックメニューに「Redmineを右側で開く」を追加し、" +
+					"Obsidian内の分割ペインでRedmine本体を表示します(デスクトップ版のみ)。" +
+					"オフにするとメニュー項目は表示されません。"
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.openIssueInWebView)
+					.onChange(async (value) => {
+						this.plugin.settings.openIssueInWebView = value;
+						await this.plugin.saveSettings();
+						this.plugin.refreshGanttViews();
 					})
 			);
 

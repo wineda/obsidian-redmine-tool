@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type RedmineGanttPlugin from "../main";
 import { RedmineClient } from "../redmine/client";
 import { buildGanttModel, GanttModel } from "../redmine/mapper";
@@ -530,6 +530,11 @@ export class GanttView extends ItemView {
 				...opts,
 				widths: this.tableWidths,
 				onEdit: (issueId: number) => this.openEditModal(issueId),
+				onOpenInPane:
+					this.plugin.settings.openIssueInWebView && Platform.isDesktopApp
+						? (issueId: number) =>
+								void this.plugin.openRedmineWeb(client.issueUrl(issueId))
+						: undefined,
 				subjectFilter: this.tableSubjectFilter,
 				situationFilter: this.tableSituationFilter,
 				groupBy: this.tableGroupBy,

@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => RedmineGanttPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -45,7 +45,8 @@ var DEFAULT_SETTINGS = {
   viewMode: "gantt",
   planItems: [],
   assigneeColors: [],
-  tableFontSize: 11
+  tableFontSize: 11,
+  openIssueInWebView: true
 };
 var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -88,6 +89,15 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
         this.plugin.refreshGanttViews();
         this.display();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Redmine\u30D3\u30E5\u30FC\u3067\u958B\u304F").setDesc(
+      "\u30C6\u30FC\u30D6\u30EB\u306E\u53F3\u30AF\u30EA\u30C3\u30AF\u30E1\u30CB\u30E5\u30FC\u306B\u300CRedmine\u3092\u53F3\u5074\u3067\u958B\u304F\u300D\u3092\u8FFD\u52A0\u3057\u3001Obsidian\u5185\u306E\u5206\u5272\u30DA\u30A4\u30F3\u3067Redmine\u672C\u4F53\u3092\u8868\u793A\u3057\u307E\u3059(\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248\u306E\u307F)\u3002\u30AA\u30D5\u306B\u3059\u308B\u3068\u30E1\u30CB\u30E5\u30FC\u9805\u76EE\u306F\u8868\u793A\u3055\u308C\u307E\u305B\u3093\u3002"
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.openIssueInWebView).onChange(async (value) => {
+        this.plugin.settings.openIssueInWebView = value;
+        await this.plugin.saveSettings();
+        this.plugin.refreshGanttViews();
       })
     );
     new import_obsidian.Setting(containerEl).setName("\u8868\u793A\u30D5\u30A3\u30EB\u30BF").setHeading().setDesc(
@@ -1301,6 +1311,11 @@ function renderRow(tbody, task, opts) {
         new import_obsidian5.Notice(`#${task.id} \u3092\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F`);
       })
     );
+    if (opts.onOpenInPane) {
+      menu.addItem(
+        (item) => item.setTitle("Redmine\u3092\u53F3\u5074\u3067\u958B\u304F").setIcon("panel-right").onClick(() => opts.onOpenInPane(task.id))
+      );
+    }
     menu.showAtMouseEvent(e);
   });
   const idCell = row.createEl("td", { cls: "rg-td-id" });
@@ -1884,6 +1899,7 @@ var GanttView = class extends import_obsidian6.ItemView {
         ...opts,
         widths: this.tableWidths,
         onEdit: (issueId) => this.openEditModal(issueId),
+        onOpenInPane: this.plugin.settings.openIssueInWebView && import_obsidian6.Platform.isDesktopApp ? (issueId) => void this.plugin.openRedmineWeb(client.issueUrl(issueId)) : void 0,
         subjectFilter: this.tableSubjectFilter,
         situationFilter: this.tableSituationFilter,
         groupBy: this.tableGroupBy
@@ -1917,11 +1933,77 @@ var GanttView = class extends import_obsidian6.ItemView {
   }
 };
 
+// src/web/RedmineWebView.ts
+var import_obsidian7 = require("obsidian");
+var VIEW_TYPE_REDMINE_WEB = "redmine-web-view";
+var RedmineWebView = class extends import_obsidian7.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.currentUrl = "";
+    this.webviewEl = null;
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return VIEW_TYPE_REDMINE_WEB;
+  }
+  getDisplayText() {
+    return "Redmine";
+  }
+  getIcon() {
+    return "globe";
+  }
+  async onOpen() {
+    this.contentEl.empty();
+    this.contentEl.addClass("rg-web-view");
+    if (!import_obsidian7.Platform.isDesktopApp) {
+      this.contentEl.createDiv({
+        cls: "rg-empty",
+        text: "Redmine\u30D3\u30E5\u30FC\u306FObsidian\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248\u306E\u307F\u5BFE\u5FDC\u3067\u3059\u3002"
+      });
+      return;
+    }
+    if (!this.currentUrl) {
+      this.currentUrl = this.plugin.settings.baseUrl;
+    }
+    const webview = document.createElement("webview");
+    webview.setAttribute("partition", "persist:redmine-gantt");
+    webview.setAttribute("allowpopups", "true");
+    if (this.currentUrl)
+      webview.setAttribute("src", this.currentUrl);
+    webview.addClass("rg-webview");
+    this.contentEl.appendChild(webview);
+    this.webviewEl = webview;
+  }
+  /** 表示URLを切り替える(ビュー未生成ならonOpen時に読み込む) */
+  navigate(url) {
+    this.currentUrl = url;
+    if (this.webviewEl) {
+      this.webviewEl.setAttribute("src", url);
+    }
+  }
+  /** ワークスペース保存・復元用にURLを保持する */
+  getState() {
+    return { url: this.currentUrl };
+  }
+  async setState(state, result) {
+    const url = state == null ? void 0 : state.url;
+    if (typeof url === "string" && url) {
+      this.navigate(url);
+    }
+    await super.setState(state, result);
+  }
+  async onClose() {
+    this.webviewEl = null;
+    this.contentEl.empty();
+  }
+};
+
 // src/main.ts
-var RedmineGanttPlugin = class extends import_obsidian7.Plugin {
+var RedmineGanttPlugin = class extends import_obsidian8.Plugin {
   async onload() {
     await this.loadSettings();
     this.registerView(VIEW_TYPE_REDMINE_GANTT, (leaf) => new GanttView(leaf, this));
+    this.registerView(VIEW_TYPE_REDMINE_WEB, (leaf) => new RedmineWebView(leaf, this));
     this.addRibbonIcon("gantt-chart", "Redmine Gantt \u3092\u958B\u304F", () => {
       void this.activateView();
     });
@@ -1941,6 +2023,23 @@ var RedmineGanttPlugin = class extends import_obsidian7.Plugin {
     } else {
       leaf = workspace.getLeaf(true);
       await leaf.setViewState({ type: VIEW_TYPE_REDMINE_GANTT, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+  }
+  /** Redmineの画面を右分割ペインのRedmineビューで開く(既に開いていればURLを差し替え) */
+  async openRedmineWeb(url) {
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(VIEW_TYPE_REDMINE_WEB);
+    let leaf;
+    if (existing.length > 0) {
+      leaf = existing[0];
+    } else {
+      leaf = workspace.getLeaf("split", "vertical");
+      await leaf.setViewState({ type: VIEW_TYPE_REDMINE_WEB, active: false });
+    }
+    const view = leaf.view;
+    if (view instanceof RedmineWebView) {
+      view.navigate(url);
     }
     await workspace.revealLeaf(leaf);
   }
