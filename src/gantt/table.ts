@@ -63,11 +63,11 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 	}
 
 	const wrap = container.createDiv({ cls: "rg-table-wrap" });
-	// 全テーブルの<col>を列ごとに束ねて、リサイズ時に一括で幅をそろえる
-	const colRegistry: HTMLTableColElement[][] = [];
+	// 全テーブルを束ねて、リサイズ時に一括で列幅・テーブル幅をそろえる
+	const tableRegistry: TableRefs[] = [];
 	const groupBy = opts.groupBy ?? "none";
 	if (groupBy === "none") {
-		buildTable(wrap, tasks, opts, colRegistry);
+		buildTable(wrap, tasks, opts, tableRegistry);
 		return;
 	}
 
@@ -94,18 +94,30 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 		const title = wrap.createDiv({ cls: "rg-table-group-title" });
 		title.style.fontSize = `${opts.fontSize + 2}px`;
 		title.setText(`${label}(${list.length}件)`);
-		buildTable(wrap, list, opts, colRegistry);
+		buildTable(wrap, list, opts, tableRegistry);
 	}
+}
+
+interface TableRefs {
+	table: HTMLTableElement;
+	cols: HTMLTableColElement[];
+}
+
+function totalWidth(widths: number[]): number {
+	return widths.reduce((sum, w) => sum + w, 0);
 }
 
 function buildTable(
 	wrap: HTMLElement,
 	tasks: GanttTask[],
 	opts: TableOptions,
-	colRegistry: HTMLTableColElement[][]
+	tableRegistry: TableRefs[]
 ): void {
 	const table = wrap.createEl("table", { cls: "rg-table" });
 	table.style.fontSize = `${opts.fontSize}px`;
+	// table-layout: fixed はテーブル幅の明示指定がないと効かない(自動レイアウトに
+	// なり内容の長さで列幅がずれる)ため、列幅の合計を常にテーブル幅として設定する
+	table.style.width = `${totalWidth(opts.widths)}px`;
 
 	const colgroup = table.createEl("colgroup");
 	const cols: HTMLTableColElement[] = COLUMNS.map((_, i) => {
@@ -113,7 +125,7 @@ function buildTable(
 		col.style.width = `${opts.widths[i]}px`;
 		return col;
 	});
-	colRegistry.push(cols);
+	tableRegistry.push({ table, cols });
 
 	const thead = table.createEl("thead");
 	const headRow = thead.createEl("tr");
@@ -127,8 +139,10 @@ function buildTable(
 			const startWidth = opts.widths[i];
 			const onMove = (ev: MouseEvent) => {
 				opts.widths[i] = Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX);
-				for (const tableCols of colRegistry) {
-					tableCols[i].style.width = `${opts.widths[i]}px`;
+				const total = totalWidth(opts.widths);
+				for (const refs of tableRegistry) {
+					refs.cols[i].style.width = `${opts.widths[i]}px`;
+					refs.table.style.width = `${total}px`;
 				}
 			};
 			const onUp = () => {
