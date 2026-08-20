@@ -681,6 +681,10 @@ body.rg-resizing {
 }
 
 /* 編集モーダル */
+.rg-edit-error {
+	padding: 8px 2px 0;
+}
+
 .rg-edit-meta {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);

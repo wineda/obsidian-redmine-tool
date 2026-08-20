@@ -31,6 +31,7 @@ export class IssueEditModal extends Modal {
 	private delivery = "";
 	private doneRatio = 0;
 	private deliveryFieldId: number | null = null;
+	private errorEl: HTMLElement | null = null;
 
 	constructor(
 		app: App,
@@ -64,25 +65,33 @@ export class IssueEditModal extends Modal {
 				this.members.unshift(issue.assigned_to);
 			}
 
-			this.statusId = issue.status.id;
-			this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
-			this.startDate = issue.start_date ?? "";
-			this.dueDate = issue.due_date ?? "";
-			this.doneRatio = issue.done_ratio ?? 0;
-			const deliveryField = issue.custom_fields?.find((f) => f.name === DELIVERY_FIELD_NAME);
-			if (deliveryField) {
-				this.deliveryFieldId = deliveryField.id;
-				this.delivery = Array.isArray(deliveryField.value)
-					? deliveryField.value.join(", ")
-					: deliveryField.value ?? "";
-			}
-
+			this.applyIssue(issue);
 			this.renderForm();
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			contentEl.empty();
 			contentEl.createEl("h3", { text: `#${this.issueId} の読み込みに失敗` });
 			contentEl.createDiv({ cls: "rg-error", text: message });
+		}
+	}
+
+	/** チケットの現在値をフォームの入力値へ反映する */
+	private applyIssue(issue: RedmineIssue): void {
+		this.issue = issue;
+		this.statusId = issue.status.id;
+		this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
+		this.startDate = issue.start_date ?? "";
+		this.dueDate = issue.due_date ?? "";
+		this.doneRatio = issue.done_ratio ?? 0;
+		const deliveryField = issue.custom_fields?.find((f) => f.name === DELIVERY_FIELD_NAME);
+		if (deliveryField) {
+			this.deliveryFieldId = deliveryField.id;
+			this.delivery = Array.isArray(deliveryField.value)
+				? deliveryField.value.join(", ")
+				: deliveryField.value ?? "";
+		} else {
+			this.deliveryFieldId = null;
+			this.delivery = "";
 		}
 	}
 
@@ -149,6 +158,10 @@ export class IssueEditModal extends Modal {
 			});
 		});
 
+		// 保存失敗・未反映時のエラー表示欄(通常は非表示)
+		this.errorEl = contentEl.createDiv({ cls: "rg-error rg-edit-error" });
+		this.errorEl.hide();
+
 		new Setting(contentEl)
 			.addButton((button) =>
 				button
@@ -157,6 +170,43 @@ export class IssueEditModal extends Modal {
 					.onClick(() => void this.save())
 			)
 			.addButton((button) => button.setButtonText("キャンセル").onClick(() => this.close()));
+	}
+
+	private showSaveError(message: string): void {
+		if (this.errorEl) {
+			this.errorEl.setText(message);
+			this.errorEl.show();
+		}
+	}
+
+	/** 更新後のチケットと送信内容を突き合わせ、反映されなかった項目名を返す */
+	private findUnappliedFields(updated: RedmineIssue, payload: RedmineIssueUpdate): string[] {
+		const unapplied: string[] = [];
+		if (payload.status_id !== undefined && updated.status.id !== payload.status_id) {
+			unapplied.push("ステータス");
+		}
+		if (payload.assigned_to_id !== undefined) {
+			const actual = updated.assigned_to ? String(updated.assigned_to.id) : "";
+			const expected = payload.assigned_to_id === "" ? "" : String(payload.assigned_to_id);
+			if (actual !== expected) unapplied.push("担当者");
+		}
+		if (payload.start_date !== undefined && (updated.start_date ?? "") !== payload.start_date) {
+			unapplied.push("開始日");
+		}
+		if (payload.due_date !== undefined && (updated.due_date ?? "") !== payload.due_date) {
+			unapplied.push("期日");
+		}
+		if (payload.done_ratio !== undefined && (updated.done_ratio ?? 0) !== payload.done_ratio) {
+			unapplied.push("進捗率");
+		}
+		for (const field of payload.custom_fields ?? []) {
+			const current = updated.custom_fields?.find((f) => f.id === field.id);
+			const value = Array.isArray(current?.value)
+				? current.value.join(", ")
+				: current?.value ?? "";
+			if (value !== field.value) unapplied.push("納期");
+		}
+		return unapplied;
 	}
 
 	/** 変更されたフィールドだけを集めた更新ペイロード。変更なしなら null */
@@ -197,15 +247,39 @@ export class IssueEditModal extends Modal {
 			return;
 		}
 		this.saving = true;
+		console.log(`[Redmine Gantt] #${this.issueId} 保存開始`, JSON.stringify(payload));
 		try {
 			await this.client.updateIssue(this.issueId, payload);
+			// PUTが成功(2xx)でも、ワークフローの制限などでRedmineが変更を黙って
+			// 無視することがあるため、再取得して実際に反映されたかを確認する
 			const updated = await this.client.fetchIssue(this.issueId);
-			new Notice(`#${this.issueId} を更新しました`);
+			const unapplied = this.findUnappliedFields(updated, payload);
 			this.onSaved(updated);
+			if (unapplied.length > 0) {
+				console.warn(
+					`[Redmine Gantt] #${this.issueId} 保存は受理されたが未反映の項目あり: ` +
+						unapplied.join("・"),
+					JSON.stringify({ payload, server: updated })
+				);
+				new Notice(`#${this.issueId}: ${unapplied.join("・")} が反映されませんでした`, 8000);
+				// フォームをサーバの現在値で描画し直し、モーダルは開いたままにする
+				this.applyIssue(updated);
+				this.renderForm();
+				this.showSaveError(
+					`サーバは更新を受け付けましたが、次の項目が反映されていません: ${unapplied.join("・")}\n` +
+						`ワークフロー(ステータス遷移)の制限や権限が原因の可能性があります。\n` +
+						`フォームはサーバの現在値に更新しました。`
+				);
+				return;
+			}
+			console.log(`[Redmine Gantt] #${this.issueId} 保存成功(全項目の反映を確認)`);
+			new Notice(`#${this.issueId} を更新しました`);
 			this.close();
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
+			console.error(`[Redmine Gantt] #${this.issueId} 保存失敗`, e);
 			new Notice(`Redmine Gantt: ${message}`, 8000);
+			this.showSaveError(`保存に失敗しました:\n${message}`);
 		} finally {
 			this.saving = false;
 		}

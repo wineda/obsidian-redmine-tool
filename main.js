@@ -211,6 +211,12 @@ var RedmineClient = class {
     if (body !== void 0) {
       headers["Content-Type"] = "application/json";
     }
+    if (method === "PUT") {
+      console.log(
+        `[Redmine Gantt] ${method} ${url} \u30EA\u30AF\u30A8\u30B9\u30C8`,
+        body !== void 0 ? JSON.stringify(body) : "(\u30DC\u30C7\u30A3\u306A\u3057)"
+      );
+    }
     let response;
     try {
       response = await (0, import_obsidian2.requestUrl)({
@@ -221,10 +227,17 @@ var RedmineClient = class {
         throw: false
       });
     } catch (e) {
+      console.error(`[Redmine Gantt] ${method} ${url} \u63A5\u7D9A\u30A8\u30E9\u30FC`, e);
       throw new RedmineApiError(
         0,
         `Redmine\u306B\u63A5\u7D9A\u3067\u304D\u307E\u305B\u3093: ${url}
 URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u9054\u3001\u307E\u305F\u306F\u81EA\u5DF1\u7F72\u540D\u8A3C\u660E\u66F8\u304C\u539F\u56E0\u306E\u53EF\u80FD\u6027\u304C\u3042\u308A\u307E\u3059\u3002(${String(e)})`
+      );
+    }
+    if (method === "PUT") {
+      console.log(
+        `[Redmine Gantt] ${method} ${url} \u30EC\u30B9\u30DD\u30F3\u30B9 HTTP ${response.status}`,
+        response.text && response.text.length > 0 ? response.text.slice(0, 2e3) : "(\u30DC\u30C7\u30A3\u306A\u3057)"
       );
     }
     if (response.status === 401) {
@@ -578,12 +591,12 @@ var IssueEditModal = class extends import_obsidian3.Modal {
     this.delivery = "";
     this.doneRatio = 0;
     this.deliveryFieldId = null;
+    this.errorEl = null;
     this.client = client;
     this.issueId = issueId;
     this.onSaved = onSaved;
   }
   async onOpen() {
-    var _a, _b, _c, _d, _e;
     const { contentEl } = this;
     contentEl.createEl("h3", { text: `#${this.issueId} \u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026` });
     try {
@@ -601,22 +614,31 @@ var IssueEditModal = class extends import_obsidian3.Modal {
       if (issue.assigned_to && !this.members.some((m) => m.id === issue.assigned_to.id)) {
         this.members.unshift(issue.assigned_to);
       }
-      this.statusId = issue.status.id;
-      this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
-      this.startDate = (_a = issue.start_date) != null ? _a : "";
-      this.dueDate = (_b = issue.due_date) != null ? _b : "";
-      this.doneRatio = (_c = issue.done_ratio) != null ? _c : 0;
-      const deliveryField = (_d = issue.custom_fields) == null ? void 0 : _d.find((f) => f.name === DELIVERY_FIELD_NAME);
-      if (deliveryField) {
-        this.deliveryFieldId = deliveryField.id;
-        this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_e = deliveryField.value) != null ? _e : "";
-      }
+      this.applyIssue(issue);
       this.renderForm();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       contentEl.empty();
       contentEl.createEl("h3", { text: `#${this.issueId} \u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557` });
       contentEl.createDiv({ cls: "rg-error", text: message });
+    }
+  }
+  /** チケットの現在値をフォームの入力値へ反映する */
+  applyIssue(issue) {
+    var _a, _b, _c, _d, _e;
+    this.issue = issue;
+    this.statusId = issue.status.id;
+    this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
+    this.startDate = (_a = issue.start_date) != null ? _a : "";
+    this.dueDate = (_b = issue.due_date) != null ? _b : "";
+    this.doneRatio = (_c = issue.done_ratio) != null ? _c : 0;
+    const deliveryField = (_d = issue.custom_fields) == null ? void 0 : _d.find((f) => f.name === DELIVERY_FIELD_NAME);
+    if (deliveryField) {
+      this.deliveryFieldId = deliveryField.id;
+      this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_e = deliveryField.value) != null ? _e : "";
+    } else {
+      this.deliveryFieldId = null;
+      this.delivery = "";
     }
   }
   renderForm() {
@@ -675,9 +697,47 @@ var IssueEditModal = class extends import_obsidian3.Modal {
         this.doneRatio = Number(value);
       });
     });
+    this.errorEl = contentEl.createDiv({ cls: "rg-error rg-edit-error" });
+    this.errorEl.hide();
     new import_obsidian3.Setting(contentEl).addButton(
       (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => void this.save())
     ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+  }
+  showSaveError(message) {
+    if (this.errorEl) {
+      this.errorEl.setText(message);
+      this.errorEl.show();
+    }
+  }
+  /** 更新後のチケットと送信内容を突き合わせ、反映されなかった項目名を返す */
+  findUnappliedFields(updated, payload) {
+    var _a, _b, _c, _d, _e, _f;
+    const unapplied = [];
+    if (payload.status_id !== void 0 && updated.status.id !== payload.status_id) {
+      unapplied.push("\u30B9\u30C6\u30FC\u30BF\u30B9");
+    }
+    if (payload.assigned_to_id !== void 0) {
+      const actual = updated.assigned_to ? String(updated.assigned_to.id) : "";
+      const expected = payload.assigned_to_id === "" ? "" : String(payload.assigned_to_id);
+      if (actual !== expected)
+        unapplied.push("\u62C5\u5F53\u8005");
+    }
+    if (payload.start_date !== void 0 && ((_a = updated.start_date) != null ? _a : "") !== payload.start_date) {
+      unapplied.push("\u958B\u59CB\u65E5");
+    }
+    if (payload.due_date !== void 0 && ((_b = updated.due_date) != null ? _b : "") !== payload.due_date) {
+      unapplied.push("\u671F\u65E5");
+    }
+    if (payload.done_ratio !== void 0 && ((_c = updated.done_ratio) != null ? _c : 0) !== payload.done_ratio) {
+      unapplied.push("\u9032\u6357\u7387");
+    }
+    for (const field of (_d = payload.custom_fields) != null ? _d : []) {
+      const current = (_e = updated.custom_fields) == null ? void 0 : _e.find((f) => f.id === field.id);
+      const value = Array.isArray(current == null ? void 0 : current.value) ? current.value.join(", ") : (_f = current == null ? void 0 : current.value) != null ? _f : "";
+      if (value !== field.value)
+        unapplied.push("\u7D0D\u671F");
+    }
+    return unapplied;
   }
   /** 変更されたフィールドだけを集めた更新ペイロード。変更なしなら null */
   buildPayload() {
@@ -716,15 +776,36 @@ var IssueEditModal = class extends import_obsidian3.Modal {
       return;
     }
     this.saving = true;
+    console.log(`[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u958B\u59CB`, JSON.stringify(payload));
     try {
       await this.client.updateIssue(this.issueId, payload);
       const updated = await this.client.fetchIssue(this.issueId);
-      new import_obsidian3.Notice(`#${this.issueId} \u3092\u66F4\u65B0\u3057\u307E\u3057\u305F`);
+      const unapplied = this.findUnappliedFields(updated, payload);
       this.onSaved(updated);
+      if (unapplied.length > 0) {
+        console.warn(
+          `[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u306F\u53D7\u7406\u3055\u308C\u305F\u304C\u672A\u53CD\u6620\u306E\u9805\u76EE\u3042\u308A: ` + unapplied.join("\u30FB"),
+          JSON.stringify({ payload, server: updated })
+        );
+        new import_obsidian3.Notice(`#${this.issueId}: ${unapplied.join("\u30FB")} \u304C\u53CD\u6620\u3055\u308C\u307E\u305B\u3093\u3067\u3057\u305F`, 8e3);
+        this.applyIssue(updated);
+        this.renderForm();
+        this.showSaveError(
+          `\u30B5\u30FC\u30D0\u306F\u66F4\u65B0\u3092\u53D7\u3051\u4ED8\u3051\u307E\u3057\u305F\u304C\u3001\u6B21\u306E\u9805\u76EE\u304C\u53CD\u6620\u3055\u308C\u3066\u3044\u307E\u305B\u3093: ${unapplied.join("\u30FB")}
+\u30EF\u30FC\u30AF\u30D5\u30ED\u30FC(\u30B9\u30C6\u30FC\u30BF\u30B9\u9077\u79FB)\u306E\u5236\u9650\u3084\u6A29\u9650\u304C\u539F\u56E0\u306E\u53EF\u80FD\u6027\u304C\u3042\u308A\u307E\u3059\u3002
+\u30D5\u30A9\u30FC\u30E0\u306F\u30B5\u30FC\u30D0\u306E\u73FE\u5728\u5024\u306B\u66F4\u65B0\u3057\u307E\u3057\u305F\u3002`
+        );
+        return;
+      }
+      console.log(`[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u6210\u529F(\u5168\u9805\u76EE\u306E\u53CD\u6620\u3092\u78BA\u8A8D)`);
+      new import_obsidian3.Notice(`#${this.issueId} \u3092\u66F4\u65B0\u3057\u307E\u3057\u305F`);
       this.close();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      console.error(`[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u5931\u6557`, e);
       new import_obsidian3.Notice(`Redmine Gantt: ${message}`, 8e3);
+      this.showSaveError(`\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F:
+${message}`);
     } finally {
       this.saving = false;
     }
