@@ -623,6 +623,11 @@ body.rg-resizing {
 	display: inline-flex;
 	align-items: center;
 	padding: 1px 4px;
+	/* Obsidian本体の button { height: var(--input-height) } を打ち消す。
+	   これが残っていると行がボタンの高さ(約30px)に押し広げられる */
+	height: auto;
+	min-height: 0;
+	line-height: 0;
 	background: transparent;
 	border: none;
 	box-shadow: none;
