@@ -99,9 +99,13 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 				.setTitle("チケット内容をコピー")
 				.setIcon("copy")
 				.onClick(async () => {
+					const due = task.due && !task.dueIsFallback ? formatDate(task.due) : "-";
 					const text = [
 						`#${task.id}`,
 						`${task.tracker} ${task.subject}`,
+						`担当者: ${task.assignee || "-"}`,
+						`期日: ${due}`,
+						`納期: ${task.delivery || "-"}`,
 						opts.issueUrl(task.id),
 					].join("\n");
 					await navigator.clipboard.writeText(text);
