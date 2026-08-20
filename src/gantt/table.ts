@@ -171,6 +171,12 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 	const editCell = row.createEl("td", { cls: "rg-td-edit" });
 	if (opts.onEdit) {
 		const btn = editCell.createEl("button", { cls: "rg-edit-btn" });
+		// Obsidian本体の button { height: var(--input-height) }(約30px)が行を
+		// 押し広げるのを打ち消す。styles.css が更新されていない環境でも効くよう
+		// インラインで指定する
+		btn.style.height = "auto";
+		btn.style.minHeight = "0";
+		btn.style.lineHeight = "0";
 		setIcon(btn, "pencil");
 		btn.setAttr("aria-label", `#${task.id} を編集`);
 		btn.addEventListener("click", () => opts.onEdit!(task.id));
