@@ -46,6 +46,25 @@
 	min-width: fit-content;
 }
 
+/* 上部固定エリア(時間軸ヘッダー+全体予定)。縦スクロールしても上部に残る */
+.rg-sticky-top {
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	display: flex;
+	align-items: flex-start;
+	min-width: fit-content;
+	background: var(--background-primary);
+}
+
+.rg-sticky-top .rg-chart {
+	background: var(--background-primary);
+}
+
+.rg-left-top {
+	z-index: 6;
+}
+
 /* ---- 左ペイン(チケット一覧) ---- */
 .rg-left {
 	position: sticky;
