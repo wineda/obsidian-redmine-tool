@@ -32,6 +32,8 @@ export class IssueEditModal extends Modal {
 	private doneRatio = 0;
 	private deliveryFieldId: number | null = null;
 	private errorEl: HTMLElement | null = null;
+	/** 子チケットを持つ親チケットか。開始日・期日・進捗率は子から自動算出のため編集不可にする */
+	private hasChildren = false;
 
 	constructor(
 		app: App,
@@ -78,6 +80,7 @@ export class IssueEditModal extends Modal {
 	/** チケットの現在値をフォームの入力値へ反映する */
 	private applyIssue(issue: RedmineIssue): void {
 		this.issue = issue;
+		this.hasChildren = (issue.children?.length ?? 0) > 0;
 		this.statusId = issue.status.id;
 		this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
 		this.startDate = issue.start_date ?? "";
@@ -126,19 +129,25 @@ export class IssueEditModal extends Modal {
 			});
 		});
 
-		new Setting(contentEl).setName("開始日").addText((text) => {
+		const derivedNote = "子チケットから自動算出されるため編集できません";
+
+		const startSetting = new Setting(contentEl).setName("開始日").addText((text) => {
 			text.inputEl.type = "date";
+			text.setDisabled(this.hasChildren);
 			text.setValue(this.startDate).onChange((value) => {
 				this.startDate = value;
 			});
 		});
+		if (this.hasChildren) startSetting.setDesc(derivedNote);
 
-		new Setting(contentEl).setName("期日").addText((text) => {
+		const dueSetting = new Setting(contentEl).setName("期日").addText((text) => {
 			text.inputEl.type = "date";
+			text.setDisabled(this.hasChildren);
 			text.setValue(this.dueDate).onChange((value) => {
 				this.dueDate = value;
 			});
 		});
+		if (this.hasChildren) dueSetting.setDesc(derivedNote);
 
 		if (this.deliveryFieldId !== null) {
 			new Setting(contentEl).setName("納期").addText((text) => {
@@ -149,14 +158,20 @@ export class IssueEditModal extends Modal {
 			});
 		}
 
-		new Setting(contentEl).setName("進捗率").addDropdown((dropdown) => {
-			for (let ratio = 0; ratio <= 100; ratio += 10) {
+		const ratioSetting = new Setting(contentEl).setName("進捗率").addDropdown((dropdown) => {
+			// 自動算出値は10%刻みとは限らないため、その値も選択肢に含めて表示する
+			const ratios = new Set<number>();
+			for (let ratio = 0; ratio <= 100; ratio += 10) ratios.add(ratio);
+			ratios.add(this.doneRatio);
+			for (const ratio of Array.from(ratios).sort((a, b) => a - b)) {
 				dropdown.addOption(String(ratio), `${ratio}%`);
 			}
+			dropdown.setDisabled(this.hasChildren);
 			dropdown.setValue(String(this.doneRatio)).onChange((value) => {
 				this.doneRatio = Number(value);
 			});
 		});
+		if (this.hasChildren) ratioSetting.setDesc(derivedNote);
 
 		// 保存失敗・未反映時のエラー表示欄(通常は非表示)
 		this.errorEl = contentEl.createDiv({ cls: "rg-error rg-edit-error" });
@@ -222,9 +237,12 @@ export class IssueEditModal extends Modal {
 			payload.assigned_to_id = this.assigneeId === "" ? "" : Number(this.assigneeId);
 		}
 
-		if (this.startDate !== (issue.start_date ?? "")) payload.start_date = this.startDate;
-		if (this.dueDate !== (issue.due_date ?? "")) payload.due_date = this.dueDate;
-		if ((this.doneRatio ?? 0) !== (issue.done_ratio ?? 0)) payload.done_ratio = this.doneRatio;
+		// 子チケット持ちの親では開始日・期日・進捗率は子から自動算出のため送らない
+		if (!this.hasChildren) {
+			if (this.startDate !== (issue.start_date ?? "")) payload.start_date = this.startDate;
+			if (this.dueDate !== (issue.due_date ?? "")) payload.due_date = this.dueDate;
+			if ((this.doneRatio ?? 0) !== (issue.done_ratio ?? 0)) payload.done_ratio = this.doneRatio;
+		}
 
 		if (this.deliveryFieldId !== null) {
 			const field = issue.custom_fields?.find((f) => f.id === this.deliveryFieldId);
