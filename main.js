@@ -1226,10 +1226,10 @@ function renderTable(container, model, opts) {
     return;
   }
   const wrap = container.createDiv({ cls: "rg-table-wrap" });
-  const colRegistry = [];
+  const tableRegistry = [];
   const groupBy = (_c = opts.groupBy) != null ? _c : "none";
   if (groupBy === "none") {
-    buildTable(wrap, tasks, opts, colRegistry);
+    buildTable(wrap, tasks, opts, tableRegistry);
     return;
   }
   const groups = /* @__PURE__ */ new Map();
@@ -1255,19 +1255,23 @@ function renderTable(container, model, opts) {
     const title = wrap.createDiv({ cls: "rg-table-group-title" });
     title.style.fontSize = `${opts.fontSize + 2}px`;
     title.setText(`${label}(${list.length}\u4EF6)`);
-    buildTable(wrap, list, opts, colRegistry);
+    buildTable(wrap, list, opts, tableRegistry);
   }
 }
-function buildTable(wrap, tasks, opts, colRegistry) {
+function totalWidth(widths) {
+  return widths.reduce((sum, w) => sum + w, 0);
+}
+function buildTable(wrap, tasks, opts, tableRegistry) {
   const table = wrap.createEl("table", { cls: "rg-table" });
   table.style.fontSize = `${opts.fontSize}px`;
+  table.style.width = `${totalWidth(opts.widths)}px`;
   const colgroup = table.createEl("colgroup");
   const cols = COLUMNS.map((_, i) => {
     const col = colgroup.createEl("col");
     col.style.width = `${opts.widths[i]}px`;
     return col;
   });
-  colRegistry.push(cols);
+  tableRegistry.push({ table, cols });
   const thead = table.createEl("thead");
   const headRow = thead.createEl("tr");
   COLUMNS.forEach((column, i) => {
@@ -1279,8 +1283,10 @@ function buildTable(wrap, tasks, opts, colRegistry) {
       const startWidth = opts.widths[i];
       const onMove = (ev) => {
         opts.widths[i] = Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX);
-        for (const tableCols of colRegistry) {
-          tableCols[i].style.width = `${opts.widths[i]}px`;
+        const total = totalWidth(opts.widths);
+        for (const refs of tableRegistry) {
+          refs.cols[i].style.width = `${opts.widths[i]}px`;
+          refs.table.style.width = `${total}px`;
         }
       };
       const onUp = () => {
