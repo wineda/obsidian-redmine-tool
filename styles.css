@@ -787,11 +787,14 @@ body.rg-resizing {
 /* ---- Redmineビュー(webview) ---- */
 .rg-web-view {
 	padding: 0;
+	position: relative;
 	overflow: hidden;
 }
 
+/* webviewは height: 100% だと親のレイアウト次第で潰れるため絶対配置で埋める */
 .rg-webview {
-	display: block;
+	position: absolute;
+	inset: 0;
 	width: 100%;
 	height: 100%;
 	border: none;

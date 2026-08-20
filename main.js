@@ -1983,6 +1983,9 @@ var RedmineWebView = class extends import_obsidian7.ItemView {
   async onOpen() {
     this.contentEl.empty();
     this.contentEl.addClass("rg-web-view");
+    this.contentEl.style.padding = "0";
+    this.contentEl.style.position = "relative";
+    this.contentEl.style.overflow = "hidden";
     if (!import_obsidian7.Platform.isDesktopApp) {
       this.contentEl.createDiv({
         cls: "rg-empty",
@@ -1999,6 +2002,10 @@ var RedmineWebView = class extends import_obsidian7.ItemView {
     if (this.currentUrl)
       webview.setAttribute("src", this.currentUrl);
     webview.addClass("rg-webview");
+    webview.style.position = "absolute";
+    webview.style.inset = "0";
+    webview.style.width = "100%";
+    webview.style.height = "100%";
     this.contentEl.appendChild(webview);
     this.webviewEl = webview;
   }
