@@ -8,7 +8,12 @@ import { IssueEditModal } from "../issue/IssueEditModal";
 import { PlanModal } from "../plan/PlanModal";
 import { DEFAULT_LEFT_WIDTH, PlanRow, renderGantt } from "./renderer";
 import { TimeRange, monthRange } from "./scale";
-import { defaultTableWidths, renderTable } from "./table";
+import {
+	SituationFilter,
+	TableGroupBy,
+	defaultTableWidths,
+	renderTable,
+} from "./table";
 
 export const VIEW_TYPE_REDMINE_GANTT = "redmine-gantt-view";
 
@@ -54,6 +59,12 @@ export class GanttView extends ItemView {
 	private selectedAssignees = new Set<string>();
 	private tableWidths: number[] = defaultTableWidths();
 	private ganttLeftWidth = DEFAULT_LEFT_WIDTH;
+
+	// テーブル表示専用のフィルタ・分割状態(セッション内のみ保持)
+	private tableControls: HTMLElement | null = null;
+	private tableSubjectFilter = "";
+	private tableSituationFilter: SituationFilter = "all";
+	private tableGroupBy: TableGroupBy = "none";
 
 	// ガントの表示期間(既定: 当月から2ヶ月)
 	private rangeYear: number;
@@ -186,6 +197,51 @@ export class GanttView extends ItemView {
 			this.renderView();
 		});
 
+		// テーブル表示専用のフィルタ・分割コントロール
+		this.tableControls = toolbar.createDiv({ cls: "rg-table-controls" });
+
+		const subjectInput = this.tableControls.createEl("input", {
+			cls: "rg-subject-input",
+			type: "search",
+			placeholder: "題名で絞り込み",
+		});
+		subjectInput.value = this.tableSubjectFilter;
+		subjectInput.addEventListener("input", () => {
+			this.tableSubjectFilter = subjectInput.value;
+			this.renderView();
+		});
+
+		const situationSelect = this.tableControls.createEl("select", { cls: "dropdown" });
+		for (const [value, label] of [
+			["all", "状況: すべて"],
+			["week1", "1週間以内"],
+			["week2", "2週間以内"],
+			["overdue", "期日・納期超過"],
+		] as const) {
+			const option = situationSelect.createEl("option", { text: label });
+			option.value = value;
+		}
+		situationSelect.value = this.tableSituationFilter;
+		situationSelect.addEventListener("change", () => {
+			this.tableSituationFilter = situationSelect.value as SituationFilter;
+			this.renderView();
+		});
+
+		const groupSelect = this.tableControls.createEl("select", { cls: "dropdown" });
+		for (const [value, label] of [
+			["none", "分けない"],
+			["tracker", "トラッカーで分ける"],
+			["assignee", "担当者で分ける"],
+		] as const) {
+			const option = groupSelect.createEl("option", { text: label });
+			option.value = value;
+		}
+		groupSelect.value = this.tableGroupBy;
+		groupSelect.addEventListener("change", () => {
+			this.tableGroupBy = groupSelect.value as TableGroupBy;
+			this.renderView();
+		});
+
 		// 完了チケットの表示切替(既定: 非表示)
 		const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
 		const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
@@ -244,9 +300,11 @@ export class GanttView extends ItemView {
 	}
 
 	private updateScaleVisibility(): void {
-		const display = this.plugin.settings.viewMode === "table" ? "none" : "";
-		if (this.scaleSelect) this.scaleSelect.style.display = display;
-		if (this.rangeControls) this.rangeControls.style.display = display;
+		const isTable = this.plugin.settings.viewMode === "table";
+		const ganttDisplay = isTable ? "none" : "";
+		if (this.scaleSelect) this.scaleSelect.style.display = ganttDisplay;
+		if (this.rangeControls) this.rangeControls.style.display = ganttDisplay;
+		if (this.tableControls) this.tableControls.style.display = isTable ? "" : "none";
 	}
 
 	private monthInputValue(): string {
@@ -472,6 +530,9 @@ export class GanttView extends ItemView {
 				...opts,
 				widths: this.tableWidths,
 				onEdit: (issueId: number) => this.openEditModal(issueId),
+				subjectFilter: this.tableSubjectFilter,
+				situationFilter: this.tableSituationFilter,
+				groupBy: this.tableGroupBy,
 			});
 		} else {
 			renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);

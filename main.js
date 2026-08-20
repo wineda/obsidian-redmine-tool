@@ -1210,13 +1210,54 @@ function defaultTableWidths() {
   return COLUMNS.map((c) => c.width);
 }
 function renderTable(container, model, opts) {
+  var _a, _b, _c;
   container.empty();
-  const all = model.tasks;
-  if (all.length === 0) {
+  let tasks = model.tasks;
+  const query = ((_a = opts.subjectFilter) != null ? _a : "").trim().toLowerCase();
+  if (query) {
+    tasks = tasks.filter((task) => task.subject.toLowerCase().includes(query));
+  }
+  const situation = (_b = opts.situationFilter) != null ? _b : "all";
+  if (situation !== "all") {
+    tasks = tasks.filter((task) => matchesSituationFilter(task, situation));
+  }
+  if (tasks.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
   const wrap = container.createDiv({ cls: "rg-table-wrap" });
+  const groupBy = (_c = opts.groupBy) != null ? _c : "none";
+  if (groupBy === "none") {
+    buildTable(wrap, tasks, opts);
+    return;
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (const task of tasks) {
+    const key = groupBy === "tracker" ? task.tracker : task.assignee;
+    const list = groups.get(key);
+    if (list) {
+      list.push(task);
+    } else {
+      groups.set(key, [task]);
+    }
+  }
+  const keys = Array.from(groups.keys()).sort((a, b) => {
+    if (a === "")
+      return 1;
+    if (b === "")
+      return -1;
+    return a.localeCompare(b, "ja");
+  });
+  for (const key of keys) {
+    const list = groups.get(key);
+    const label = key !== "" ? key : groupBy === "assignee" ? "(\u62C5\u5F53\u8005\u306A\u3057)" : "(\u30C8\u30E9\u30C3\u30AB\u30FC\u306A\u3057)";
+    const title = wrap.createDiv({ cls: "rg-table-group-title" });
+    title.style.fontSize = `${opts.fontSize + 2}px`;
+    title.setText(`${label}(${list.length}\u4EF6)`);
+    buildTable(wrap, list, opts);
+  }
+}
+function buildTable(wrap, tasks, opts) {
   const table = wrap.createEl("table", { cls: "rg-table" });
   table.style.fontSize = `${opts.fontSize}px`;
   const colgroup = table.createEl("colgroup");
@@ -1249,7 +1290,7 @@ function renderTable(container, model, opts) {
     });
   });
   const tbody = table.createEl("tbody");
-  for (const task of all) {
+  for (const task of tasks) {
     renderRow(tbody, task, opts);
   }
 }
@@ -1358,7 +1399,7 @@ function parseDeliveryDate(s) {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 var DUE_SOON_DAYS = 14;
-function computeSituation(task) {
+function situationInfo(task) {
   if (task.isClosed || task.isContext)
     return null;
   const due = task.due && !task.dueIsFallback ? task.due : null;
@@ -1369,7 +1410,23 @@ function computeSituation(task) {
     return null;
   const now = /* @__PURE__ */ new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const diff = diffDays(today, target);
+  return { label, target, diff: diffDays(today, target) };
+}
+function matchesSituationFilter(task, filter) {
+  const info = situationInfo(task);
+  if (!info)
+    return false;
+  if (filter === "overdue")
+    return info.diff < 0;
+  if (filter === "week1")
+    return info.diff >= 0 && info.diff <= 7;
+  return info.diff >= 0 && info.diff <= 14;
+}
+function computeSituation(task) {
+  const info = situationInfo(task);
+  if (!info)
+    return null;
+  const { label, target, diff } = info;
   if (diff < 0) {
     return { text: `${label}\u8D85\u904E`, kind: "over", title: `${-diff}\u65E5\u8D85\u904E (${formatDate(target)})` };
   }
@@ -1419,6 +1476,11 @@ var GanttView = class extends import_obsidian6.ItemView {
     this.selectedAssignees = /* @__PURE__ */ new Set();
     this.tableWidths = defaultTableWidths();
     this.ganttLeftWidth = DEFAULT_LEFT_WIDTH;
+    // テーブル表示専用のフィルタ・分割状態(セッション内のみ保持)
+    this.tableControls = null;
+    this.tableSubjectFilter = "";
+    this.tableSituationFilter = "all";
+    this.tableGroupBy = "none";
     this.rangeMonths = 2;
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
@@ -1528,6 +1590,46 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.rangeMonths = Number(monthsSelect.value);
       this.renderView();
     });
+    this.tableControls = toolbar.createDiv({ cls: "rg-table-controls" });
+    const subjectInput = this.tableControls.createEl("input", {
+      cls: "rg-subject-input",
+      type: "search",
+      placeholder: "\u984C\u540D\u3067\u7D5E\u308A\u8FBC\u307F"
+    });
+    subjectInput.value = this.tableSubjectFilter;
+    subjectInput.addEventListener("input", () => {
+      this.tableSubjectFilter = subjectInput.value;
+      this.renderView();
+    });
+    const situationSelect = this.tableControls.createEl("select", { cls: "dropdown" });
+    for (const [value, label] of [
+      ["all", "\u72B6\u6CC1: \u3059\u3079\u3066"],
+      ["week1", "1\u9031\u9593\u4EE5\u5185"],
+      ["week2", "2\u9031\u9593\u4EE5\u5185"],
+      ["overdue", "\u671F\u65E5\u30FB\u7D0D\u671F\u8D85\u904E"]
+    ]) {
+      const option = situationSelect.createEl("option", { text: label });
+      option.value = value;
+    }
+    situationSelect.value = this.tableSituationFilter;
+    situationSelect.addEventListener("change", () => {
+      this.tableSituationFilter = situationSelect.value;
+      this.renderView();
+    });
+    const groupSelect = this.tableControls.createEl("select", { cls: "dropdown" });
+    for (const [value, label] of [
+      ["none", "\u5206\u3051\u306A\u3044"],
+      ["tracker", "\u30C8\u30E9\u30C3\u30AB\u30FC\u3067\u5206\u3051\u308B"],
+      ["assignee", "\u62C5\u5F53\u8005\u3067\u5206\u3051\u308B"]
+    ]) {
+      const option = groupSelect.createEl("option", { text: label });
+      option.value = value;
+    }
+    groupSelect.value = this.tableGroupBy;
+    groupSelect.addEventListener("change", () => {
+      this.tableGroupBy = groupSelect.value;
+      this.renderView();
+    });
     const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
     const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
     closedLabel.appendText("\u5B8C\u4E86");
@@ -1573,11 +1675,14 @@ var GanttView = class extends import_obsidian6.ItemView {
     return (_a = this.plugin.settings.filters.find((f) => f.name === name)) != null ? _a : null;
   }
   updateScaleVisibility() {
-    const display = this.plugin.settings.viewMode === "table" ? "none" : "";
+    const isTable = this.plugin.settings.viewMode === "table";
+    const ganttDisplay = isTable ? "none" : "";
     if (this.scaleSelect)
-      this.scaleSelect.style.display = display;
+      this.scaleSelect.style.display = ganttDisplay;
     if (this.rangeControls)
-      this.rangeControls.style.display = display;
+      this.rangeControls.style.display = ganttDisplay;
+    if (this.tableControls)
+      this.tableControls.style.display = isTable ? "" : "none";
   }
   monthInputValue() {
     return `${this.rangeYear}-${String(this.rangeMonth + 1).padStart(2, "0")}`;
@@ -1796,7 +1901,10 @@ var GanttView = class extends import_obsidian6.ItemView {
       renderTable(this.chartEl, model, {
         ...opts,
         widths: this.tableWidths,
-        onEdit: (issueId) => this.openEditModal(issueId)
+        onEdit: (issueId) => this.openEditModal(issueId),
+        subjectFilter: this.tableSubjectFilter,
+        situationFilter: this.tableSituationFilter,
+        groupBy: this.tableGroupBy
       });
     } else {
       renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);

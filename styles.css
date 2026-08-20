@@ -471,6 +471,35 @@
 }
 
 /* ---- テーブル表示 ---- */
+/* テーブル専用のフィルタ・分割コントロール */
+.rg-table-controls {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.rg-subject-input {
+	font: inherit;
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 2px 8px;
+	width: 160px;
+}
+
+/* トラッカー/担当者で分けたときのグループ見出し */
+.rg-table-group-title {
+	font-weight: 600;
+	color: var(--text-normal);
+	padding: 14px 2px 4px;
+}
+
+.rg-table-group-title:first-child {
+	padding-top: 8px;
+}
+
 .rg-table-wrap {
 	overflow: auto;
 	padding: 0 12px 16px;
