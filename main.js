@@ -1237,9 +1237,13 @@ function renderRow(tbody, task, opts) {
     const menu = new import_obsidian5.Menu();
     menu.addItem(
       (item) => item.setTitle("\u30C1\u30B1\u30C3\u30C8\u5185\u5BB9\u3092\u30B3\u30D4\u30FC").setIcon("copy").onClick(async () => {
+        const due = task.due && !task.dueIsFallback ? formatDate(task.due) : "-";
         const text = [
           `#${task.id}`,
           `${task.tracker} ${task.subject}`,
+          `\u62C5\u5F53\u8005: ${task.assignee || "-"}`,
+          `\u671F\u65E5: ${due}`,
+          `\u7D0D\u671F: ${task.delivery || "-"}`,
           opts.issueUrl(task.id)
         ].join("\n");
         await navigator.clipboard.writeText(text);
