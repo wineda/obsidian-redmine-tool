@@ -1,4 +1,4 @@
-import { setIcon } from "obsidian";
+import { Menu, Notice, setIcon } from "obsidian";
 import type { GanttModel, GanttTask } from "../redmine/mapper";
 import { formatDate, RenderOptions, rowHeightFor } from "./renderer";
 import { diffDays } from "./scale";
@@ -89,6 +89,27 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 	row.style.height = `${rowHeightFor(opts.fontSize)}px`;
 	if (task.isClosed) row.addClass("rg-row-closed");
 	if (task.isContext) row.addClass("rg-row-context");
+
+	// 右クリックでチケット内容(番号・トラッカー 題名・URL)をコピー
+	row.addEventListener("contextmenu", (e: MouseEvent) => {
+		e.preventDefault();
+		const menu = new Menu();
+		menu.addItem((item) =>
+			item
+				.setTitle("チケット内容をコピー")
+				.setIcon("copy")
+				.onClick(async () => {
+					const text = [
+						`#${task.id}`,
+						`${task.tracker} ${task.subject}`,
+						opts.issueUrl(task.id),
+					].join("\n");
+					await navigator.clipboard.writeText(text);
+					new Notice(`#${task.id} をコピーしました`);
+				})
+		);
+		menu.showAtMouseEvent(e);
+	});
 
 	// #
 	const idCell = row.createEl("td", { cls: "rg-td-id" });

@@ -1232,6 +1232,22 @@ function renderRow(tbody, task, opts) {
     row.addClass("rg-row-closed");
   if (task.isContext)
     row.addClass("rg-row-context");
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const menu = new import_obsidian5.Menu();
+    menu.addItem(
+      (item) => item.setTitle("\u30C1\u30B1\u30C3\u30C8\u5185\u5BB9\u3092\u30B3\u30D4\u30FC").setIcon("copy").onClick(async () => {
+        const text = [
+          `#${task.id}`,
+          `${task.tracker} ${task.subject}`,
+          opts.issueUrl(task.id)
+        ].join("\n");
+        await navigator.clipboard.writeText(text);
+        new import_obsidian5.Notice(`#${task.id} \u3092\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F`);
+      })
+    );
+    menu.showAtMouseEvent(e);
+  });
   const idCell = row.createEl("td", { cls: "rg-td-id" });
   idCell.createEl("a", {
     cls: "rg-issue-link",
