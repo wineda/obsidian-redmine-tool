@@ -1295,6 +1295,9 @@ function renderRow(tbody, task, opts) {
   const editCell = row.createEl("td", { cls: "rg-td-edit" });
   if (opts.onEdit) {
     const btn = editCell.createEl("button", { cls: "rg-edit-btn" });
+    btn.style.height = "auto";
+    btn.style.minHeight = "0";
+    btn.style.lineHeight = "0";
     (0, import_obsidian5.setIcon)(btn, "pencil");
     btn.setAttr("aria-label", `#${task.id} \u3092\u7DE8\u96C6`);
     btn.addEventListener("click", () => opts.onEdit(task.id));
