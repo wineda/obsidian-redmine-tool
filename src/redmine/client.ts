@@ -62,6 +62,14 @@ export class RedmineClient {
 			headers["Content-Type"] = "application/json";
 		}
 
+		// 更新系はトラブル調査のためリクエスト/レスポンスをコンソールへ記録する
+		if (method === "PUT") {
+			console.log(
+				`[Redmine Gantt] ${method} ${url} リクエスト`,
+				body !== undefined ? JSON.stringify(body) : "(ボディなし)"
+			);
+		}
+
 		let response;
 		try {
 			response = await requestUrl({
@@ -72,10 +80,18 @@ export class RedmineClient {
 				throw: false,
 			});
 		} catch (e) {
+			console.error(`[Redmine Gantt] ${method} ${url} 接続エラー`, e);
 			throw new RedmineApiError(
 				0,
 				`Redmineに接続できません: ${url}\n` +
 					`URLの誤り、ネットワーク未到達、または自己署名証明書が原因の可能性があります。(${String(e)})`
+			);
+		}
+
+		if (method === "PUT") {
+			console.log(
+				`[Redmine Gantt] ${method} ${url} レスポンス HTTP ${response.status}`,
+				response.text && response.text.length > 0 ? response.text.slice(0, 2000) : "(ボディなし)"
 			);
 		}
 
