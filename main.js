@@ -1431,17 +1431,19 @@ function renderGantt(container, model, plans, scale, range, opts) {
     if (task.isContext)
       row.addClass("rg-row-context");
     const rowRight = row.createDiv({ cls: "rg-left-right" });
+    const assigneeCell = rowRight.createDiv({ cls: "rg-left-col-assignee" });
     if (task.assignee) {
-      const chip = rowRight.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+      const chip = assigneeCell.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
       const color = task.isContext ? null : opts.assigneeColor(task.assignee);
       if (color) {
         chip.style.backgroundColor = color;
         chip.addClass("rg-assignee-chip-colored");
       }
     }
+    const situationCell = rowRight.createDiv({ cls: "rg-left-col-situation" });
     const situation = computeSituation(task);
     if (situation) {
-      const badge = rowRight.createSpan({
+      const badge = situationCell.createSpan({
         cls: `rg-due rg-due-${situation.kind}`,
         text: situation.text
       });

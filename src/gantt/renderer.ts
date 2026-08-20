@@ -380,19 +380,21 @@ export function renderGantt(
 		if (task.isClosed) row.addClass("rg-row-closed");
 		if (task.isContext) row.addClass("rg-row-context");
 
-		// 右寄せ領域: 担当者チップ+状況バッジ(テーブル表示と同じ並び)
+		// 右寄せ領域: 担当者・状況の固定幅カラム(全行で縦位置がそろうよう常に両方作る)
 		const rowRight = row.createDiv({ cls: "rg-left-right" });
+		const assigneeCell = rowRight.createDiv({ cls: "rg-left-col-assignee" });
 		if (task.assignee) {
-			const chip = rowRight.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+			const chip = assigneeCell.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
 			const color = task.isContext ? null : opts.assigneeColor(task.assignee);
 			if (color) {
 				chip.style.backgroundColor = color;
 				chip.addClass("rg-assignee-chip-colored");
 			}
 		}
+		const situationCell = rowRight.createDiv({ cls: "rg-left-col-situation" });
 		const situation = computeSituation(task);
 		if (situation) {
-			const badge = rowRight.createSpan({
+			const badge = situationCell.createSpan({
 				cls: `rg-due rg-due-${situation.kind}`,
 				text: situation.text,
 			});

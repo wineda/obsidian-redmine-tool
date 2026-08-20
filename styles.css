@@ -178,13 +178,29 @@
 	font-size: 0.9em;
 }
 
-/* 行右端の担当者チップ+状況バッジ */
+/* 行右端の担当者・状況カラム(固定幅で全行の縦位置をそろえる) */
 .rg-left-row .rg-left-right {
 	flex: 0 0 auto;
 	margin-left: auto;
 	display: flex;
 	align-items: center;
 	gap: 6px;
+}
+
+.rg-left-col-assignee {
+	flex: 0 0 auto;
+	width: 7em;
+	display: flex;
+	justify-content: flex-start;
+	overflow: hidden;
+}
+
+.rg-left-col-situation {
+	flex: 0 0 auto;
+	width: 7em;
+	display: flex;
+	justify-content: flex-start;
+	overflow: hidden;
 }
 
 .rg-left .rg-due {
