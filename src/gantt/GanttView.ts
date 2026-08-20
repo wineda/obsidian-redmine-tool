@@ -524,7 +524,14 @@ export class GanttView extends ItemView {
 			onLeftWidthChange: (width: number) => {
 				this.ganttLeftWidth = width;
 			},
+			// 1ヶ月表示のときはスケールに関わらず日単位の詳細表示にする
+			dayDetail: this.rangeMonths === 1,
 		};
+		if (this.scaleSelect) {
+			this.scaleSelect.disabled = this.rangeMonths === 1;
+			this.scaleSelect.title =
+				this.rangeMonths === 1 ? "1ヶ月表示では常に日単位で表示します" : "";
+		}
 		if (this.plugin.settings.viewMode === "table") {
 			renderTable(this.chartEl, model, {
 				...opts,

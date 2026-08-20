@@ -175,8 +175,20 @@
 
 .rg-left-row .rg-assignee-chip {
 	flex: 0 0 auto;
-	margin-left: auto;
 	font-size: 0.9em;
+}
+
+/* 行右端の担当者チップ+状況バッジ */
+.rg-left-row .rg-left-right {
+	flex: 0 0 auto;
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.rg-left .rg-due {
+	font-size: 0.85em;
 }
 
 .rg-row-context .rg-assignee-chip {
@@ -210,6 +222,26 @@
 .rg-tick-minor {
 	fill: var(--text-muted);
 	font-size: 10px;
+}
+
+/* 日詳細モード(1ヶ月表示)の曜日ラベルと休日色 */
+.rg-tick-dow {
+	fill: var(--text-muted);
+	font-size: 9px;
+}
+
+.rg-tick-sat {
+	fill: var(--color-blue);
+}
+
+.rg-tick-sun {
+	fill: var(--color-red);
+}
+
+/* 日曜・祝日の背景帯は週末よりわずかに赤みを付ける */
+.rg-weekend.rg-holiday {
+	fill: var(--color-red);
+	opacity: 0.07;
 }
 
 .rg-bar-group {

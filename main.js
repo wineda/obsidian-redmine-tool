@@ -13,9 +13,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -968,6 +968,13 @@ function addDays(d, days) {
 function diffDays(from, to) {
   return Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_PER_DAY);
 }
+function formatDate(d) {
+  if (!d)
+    return "-";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
 function monthRange(year, month0, months) {
   const start = new Date(year, month0, 1);
   const end = new Date(year, month0 + months, 0);
@@ -1011,6 +1018,138 @@ function weekendBands(range, scale) {
   return bands;
 }
 
+// src/gantt/holidays.ts
+var cache = /* @__PURE__ */ new Map();
+function key(month0, day) {
+  return month0 * 100 + day;
+}
+function nthMonday(year, month0, n) {
+  const first = new Date(year, month0, 1).getDay();
+  const offset = (8 - first) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
+function vernalEquinoxDay(year) {
+  return Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+}
+function autumnalEquinoxDay(year) {
+  return Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+}
+function holidaysOf(year) {
+  const cached = cache.get(year);
+  if (cached)
+    return cached;
+  const base = [
+    [0, 1],
+    // 元日
+    [0, nthMonday(year, 0, 2)],
+    // 成人の日
+    [1, 11],
+    // 建国記念の日
+    [1, 23],
+    // 天皇誕生日
+    [2, vernalEquinoxDay(year)],
+    // 春分の日
+    [3, 29],
+    // 昭和の日
+    [4, 3],
+    // 憲法記念日
+    [4, 4],
+    // みどりの日
+    [4, 5],
+    // こどもの日
+    [6, nthMonday(year, 6, 3)],
+    // 海の日
+    [7, 11],
+    // 山の日
+    [8, nthMonday(year, 8, 3)],
+    // 敬老の日
+    [8, autumnalEquinoxDay(year)],
+    // 秋分の日
+    [9, nthMonday(year, 9, 2)],
+    // スポーツの日
+    [10, 3],
+    // 文化の日
+    [10, 23]
+    // 勤労感謝の日
+  ];
+  const set = new Set(base.map(([m, d]) => key(m, d)));
+  for (const [m, d] of base) {
+    const date = new Date(year, m, d);
+    if (date.getDay() !== 0)
+      continue;
+    let next = addDays(date, 1);
+    while (set.has(key(next.getMonth(), next.getDate()))) {
+      next = addDays(next, 1);
+    }
+    if (next.getFullYear() === year)
+      set.add(key(next.getMonth(), next.getDate()));
+  }
+  for (const [m, d] of base) {
+    const candidate = new Date(year, m, d + 2);
+    if (candidate.getFullYear() !== year)
+      continue;
+    const candidateKey = key(candidate.getMonth(), candidate.getDate());
+    const betweenKey = key(new Date(year, m, d + 1).getMonth(), new Date(year, m, d + 1).getDate());
+    if (set.has(candidateKey) && !set.has(betweenKey)) {
+      const between = new Date(year, m, d + 1);
+      if (between.getDay() !== 0)
+        set.add(betweenKey);
+    }
+  }
+  cache.set(year, set);
+  return set;
+}
+function isJapaneseHoliday(d) {
+  return holidaysOf(d.getFullYear()).has(key(d.getMonth(), d.getDate()));
+}
+
+// src/gantt/situation.ts
+var DUE_SOON_DAYS = 14;
+function parseDeliveryDate(s) {
+  const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m)
+    return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+function situationInfo(task) {
+  if (task.isClosed || task.isContext)
+    return null;
+  const due = task.due && !task.dueIsFallback ? task.due : null;
+  const delivery = parseDeliveryDate(task.delivery);
+  const label = due ? "\u671F\u65E5" : delivery ? "\u7D0D\u671F" : null;
+  const target = due != null ? due : delivery;
+  if (!label || !target)
+    return null;
+  const now = /* @__PURE__ */ new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return { label, target, diff: diffDays(today, target) };
+}
+function matchesSituationFilter(task, filter) {
+  const info = situationInfo(task);
+  if (!info)
+    return false;
+  if (filter === "overdue")
+    return info.diff < 0;
+  if (filter === "week1")
+    return info.diff >= 0 && info.diff <= 7;
+  return info.diff >= 0 && info.diff <= 14;
+}
+function computeSituation(task) {
+  const info = situationInfo(task);
+  if (!info)
+    return null;
+  const { label, target, diff } = info;
+  if (diff < 0) {
+    return { text: `${label}\u8D85\u904E`, kind: "over", title: `${-diff}\u65E5\u8D85\u904E (${formatDate(target)})` };
+  }
+  if (diff > DUE_SOON_DAYS)
+    return null;
+  if (diff === 0) {
+    return { text: `${label}\u672C\u65E5`, kind: "soon" };
+  }
+  return { text: `${label}\u3042\u3068${diff}\u65E5`, kind: "soon" };
+}
+
 // src/gantt/renderer.ts
 var HEADER_HEIGHT = 40;
 var DEFAULT_LEFT_WIDTH = 480;
@@ -1024,6 +1163,8 @@ function svg(tag, attrs = {}) {
   }
   return el;
 }
+var DAY_DETAIL_PX_PER_DAY = 44;
+var DOW_LABELS = ["\u65E5", "\u6708", "\u706B", "\u6C34", "\u6728", "\u91D1", "\u571F"];
 function rowHeightFor(fontSize) {
   return Math.max(16, Math.round(fontSize * 2));
 }
@@ -1042,7 +1183,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
-  const ppd = PX_PER_DAY[scale];
+  const ppd = opts.dayDetail ? DAY_DETAIL_PX_PER_DAY : PX_PER_DAY[scale];
   const chartWidth = (range.days + 1) * ppd;
   const rowHeight = rowHeightFor(opts.fontSize);
   const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
@@ -1066,9 +1207,25 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
   const tasksHeight = model.tasks.length * rowHeight;
   const leftWidth = (_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH;
-  const ticks = computeTicks(range, scale);
+  let ticks = computeTicks(range, scale);
+  if (opts.dayDetail) {
+    ticks = { major: [], minor: [], gridX: [] };
+    for (let i = 0; i <= range.days; i++)
+      ticks.gridX.push(i * ppd);
+  }
   const today = /* @__PURE__ */ new Date();
   const todayX = today >= range.start && diffDays(range.start, today) <= range.days ? diffDays(range.start, today) * ppd + ppd / 2 : null;
+  const restDays = [];
+  if (opts.dayDetail) {
+    for (let i = 0; i <= range.days; i++) {
+      const d = addDays(range.start, i);
+      const dow = d.getDay();
+      const holiday = isJapaneseHoliday(d);
+      if (dow === 0 || dow === 6 || holiday) {
+        restDays.push({ x: i * ppd, holiday: holiday || dow === 0 });
+      }
+    }
+  }
   const leftEls = [];
   const attachResizer = (host) => {
     const resizer = host.createDiv({ cls: "rg-left-resizer" });
@@ -1144,18 +1301,51 @@ function renderGantt(container, model, plans, scale, range, opts) {
       })
     );
   }
-  for (const tick of ticks.major) {
-    const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
-    t.textContent = tick.label;
-    topSvg.appendChild(t);
-    topSvg.appendChild(
-      svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
-    );
-  }
-  for (const tick of ticks.minor) {
-    const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
-    t.textContent = tick.label;
-    topSvg.appendChild(t);
+  if (opts.dayDetail) {
+    for (let i = 0; i <= range.days; i++) {
+      const d = addDays(range.start, i);
+      const x = i * ppd;
+      if (d.getDate() === 1 || i === 0) {
+        const t = svg("text", { x: x + 4, y: 15, class: "rg-tick-major" });
+        t.textContent = `${d.getFullYear()}/${d.getMonth() + 1}`;
+        topSvg.appendChild(t);
+        topSvg.appendChild(
+          svg("line", { x1: x, y1: 0, x2: x, y2: HEADER_HEIGHT, class: "rg-grid" })
+        );
+      }
+      const dow = d.getDay();
+      const restClass = isJapaneseHoliday(d) || dow === 0 ? " rg-tick-sun" : dow === 6 ? " rg-tick-sat" : "";
+      const dayText = svg("text", {
+        x: x + ppd / 2,
+        y: 27,
+        "text-anchor": "middle",
+        class: "rg-tick-minor" + restClass
+      });
+      dayText.textContent = String(d.getDate());
+      topSvg.appendChild(dayText);
+      const dowText = svg("text", {
+        x: x + ppd / 2,
+        y: 38,
+        "text-anchor": "middle",
+        class: "rg-tick-dow" + restClass
+      });
+      dowText.textContent = DOW_LABELS[dow];
+      topSvg.appendChild(dowText);
+    }
+  } else {
+    for (const tick of ticks.major) {
+      const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
+      t.textContent = tick.label;
+      topSvg.appendChild(t);
+      topSvg.appendChild(
+        svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
+      );
+    }
+    for (const tick of ticks.minor) {
+      const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
+      t.textContent = tick.label;
+      topSvg.appendChild(t);
+    }
   }
   for (const plan of datedPlans) {
     const lane = (_b = planLane.get(plan)) != null ? _b : 0;
@@ -1240,13 +1430,23 @@ function renderGantt(container, model, plans, scale, range, opts) {
       row.addClass("rg-row-closed");
     if (task.isContext)
       row.addClass("rg-row-context");
+    const rowRight = row.createDiv({ cls: "rg-left-right" });
     if (task.assignee) {
-      const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+      const chip = rowRight.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
       const color = task.isContext ? null : opts.assigneeColor(task.assignee);
       if (color) {
         chip.style.backgroundColor = color;
         chip.addClass("rg-assignee-chip-colored");
       }
+    }
+    const situation = computeSituation(task);
+    if (situation) {
+      const badge = rowRight.createSpan({
+        cls: `rg-due rg-due-${situation.kind}`,
+        text: situation.text
+      });
+      if (situation.title)
+        badge.setAttr("title", situation.title);
     }
   }
   const chart = body.createDiv({ cls: "rg-chart" });
@@ -1256,10 +1456,24 @@ function renderGantt(container, model, plans, scale, range, opts) {
     viewBox: `0 0 ${chartWidth} ${tasksHeight}`
   });
   chart.appendChild(root);
-  for (const band of weekendBands(range, scale)) {
-    root.appendChild(
-      svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
-    );
+  if (opts.dayDetail) {
+    for (const rest of restDays) {
+      root.appendChild(
+        svg("rect", {
+          x: rest.x,
+          y: 0,
+          width: ppd,
+          height: tasksHeight,
+          class: "rg-weekend" + (rest.holiday ? " rg-holiday" : "")
+        })
+      );
+    }
+  } else {
+    for (const band of weekendBands(range, scale)) {
+      root.appendChild(
+        svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
+      );
+    }
   }
   for (const x of ticks.gridX) {
     root.appendChild(svg("line", { x1: x, y1: 0, x2: x, y2: tasksHeight, class: "rg-grid" }));
@@ -1311,13 +1525,6 @@ function renderGantt(container, model, plans, scale, range, opts) {
       svg("line", { x1: todayX, y1: 0, x2: todayX, y2: tasksHeight, class: "rg-today" })
     );
   }
-}
-function formatDate(d) {
-  if (!d)
-    return "-";
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
 }
 function taskTooltip(task) {
   const lines = [
@@ -1385,12 +1592,12 @@ function renderTable(container, model, opts) {
   }
   const groups = /* @__PURE__ */ new Map();
   for (const task of tasks) {
-    const key = groupBy === "tracker" ? task.tracker : task.assignee;
-    const list = groups.get(key);
+    const key2 = groupBy === "tracker" ? task.tracker : task.assignee;
+    const list = groups.get(key2);
     if (list) {
       list.push(task);
     } else {
-      groups.set(key, [task]);
+      groups.set(key2, [task]);
     }
   }
   const keys = Array.from(groups.keys()).sort((a, b) => {
@@ -1400,9 +1607,9 @@ function renderTable(container, model, opts) {
       return -1;
     return a.localeCompare(b, "ja");
   });
-  for (const key of keys) {
-    const list = groups.get(key);
-    const label = key !== "" ? key : groupBy === "assignee" ? "(\u62C5\u5F53\u8005\u306A\u3057)" : "(\u30C8\u30E9\u30C3\u30AB\u30FC\u306A\u3057)";
+  for (const key2 of keys) {
+    const list = groups.get(key2);
+    const label = key2 !== "" ? key2 : groupBy === "assignee" ? "(\u62C5\u5F53\u8005\u306A\u3057)" : "(\u30C8\u30E9\u30C3\u30AB\u30FC\u306A\u3057)";
     const title = wrap.createDiv({ cls: "rg-table-group-title" });
     title.style.fontSize = `${opts.fontSize + 2}px`;
     title.setText(`${label}(${list.length}\u4EF6)`);
@@ -1557,51 +1764,6 @@ function renderRow(tbody, task, opts) {
     btn.setAttr("aria-label", `#${task.id} \u3092\u7DE8\u96C6`);
     btn.addEventListener("click", () => opts.onEdit(task.id));
   }
-}
-function parseDeliveryDate(s) {
-  const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m)
-    return null;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-}
-var DUE_SOON_DAYS = 14;
-function situationInfo(task) {
-  if (task.isClosed || task.isContext)
-    return null;
-  const due = task.due && !task.dueIsFallback ? task.due : null;
-  const delivery = parseDeliveryDate(task.delivery);
-  const label = due ? "\u671F\u65E5" : delivery ? "\u7D0D\u671F" : null;
-  const target = due != null ? due : delivery;
-  if (!label || !target)
-    return null;
-  const now = /* @__PURE__ */ new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return { label, target, diff: diffDays(today, target) };
-}
-function matchesSituationFilter(task, filter) {
-  const info = situationInfo(task);
-  if (!info)
-    return false;
-  if (filter === "overdue")
-    return info.diff < 0;
-  if (filter === "week1")
-    return info.diff >= 0 && info.diff <= 7;
-  return info.diff >= 0 && info.diff <= 14;
-}
-function computeSituation(task) {
-  const info = situationInfo(task);
-  if (!info)
-    return null;
-  const { label, target, diff } = info;
-  if (diff < 0) {
-    return { text: `${label}\u8D85\u904E`, kind: "over", title: `${-diff}\u65E5\u8D85\u904E (${formatDate(target)})` };
-  }
-  if (diff > DUE_SOON_DAYS)
-    return null;
-  if (diff === 0) {
-    return { text: `${label}\u672C\u65E5`, kind: "soon" };
-  }
-  return { text: `${label}\u3042\u3068${diff}\u65E5`, kind: "soon" };
 }
 
 // src/gantt/GanttView.ts
@@ -2061,8 +2223,14 @@ var GanttView = class extends import_obsidian6.ItemView {
       leftWidth: this.ganttLeftWidth,
       onLeftWidthChange: (width) => {
         this.ganttLeftWidth = width;
-      }
+      },
+      // 1ヶ月表示のときはスケールに関わらず日単位の詳細表示にする
+      dayDetail: this.rangeMonths === 1
     };
+    if (this.scaleSelect) {
+      this.scaleSelect.disabled = this.rangeMonths === 1;
+      this.scaleSelect.title = this.rangeMonths === 1 ? "1\u30F6\u6708\u8868\u793A\u3067\u306F\u5E38\u306B\u65E5\u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059" : "";
+    }
     if (this.plugin.settings.viewMode === "table") {
       renderTable(this.chartEl, model, {
         ...opts,

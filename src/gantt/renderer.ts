@@ -6,8 +6,14 @@ import {
 	addDays,
 	computeTicks,
 	diffDays,
+	formatDate,
 	weekendBands,
 } from "./scale";
+import { isJapaneseHoliday } from "./holidays";
+import { computeSituation } from "./situation";
+
+// 他モジュール(table.tsなど)は従来どおりrenderer経由でも参照できるようにする
+export { formatDate } from "./scale";
 
 const HEADER_HEIGHT = 40;
 export const DEFAULT_LEFT_WIDTH = 480;
@@ -45,7 +51,16 @@ export interface RenderOptions {
 	leftWidth?: number;
 	/** 左ペイン幅をドラッグで変更したときに呼ばれる(呼び出し側で保持する) */
 	onLeftWidthChange?: (width: number) => void;
+	/**
+	 * 日詳細モード(1ヶ月表示時)。スケール設定に関わらず1日単位で広めに表示し、
+	 * ヘッダーに日付+曜日、土日祝の背景帯を描く
+	 */
+	dayDetail?: boolean;
 }
+
+/** 日詳細モードの1日あたりピクセル幅(通常の日スケールより広め) */
+const DAY_DETAIL_PX_PER_DAY = 44;
+const DOW_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 
 /** 文字サイズに応じた行の高さ(px)。ガントとテーブル表示で共通 */
 export function rowHeightFor(fontSize: number): number {
@@ -80,7 +95,7 @@ export function renderGantt(
 		return;
 	}
 
-	const ppd = PX_PER_DAY[scale];
+	const ppd = opts.dayDetail ? DAY_DETAIL_PX_PER_DAY : PX_PER_DAY[scale];
 	const chartWidth = (range.days + 1) * ppd;
 	// 文字サイズに応じて行の高さ・バーの余白を連動させる
 	const rowHeight = rowHeightFor(opts.fontSize);
@@ -113,13 +128,31 @@ export function renderGantt(
 	const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
 	const tasksHeight = model.tasks.length * rowHeight;
 	const leftWidth = opts.leftWidth ?? DEFAULT_LEFT_WIDTH;
-	const ticks = computeTicks(range, scale);
+	// 日詳細モードは毎日グリッド線を引き、ヘッダー目盛りは専用描画にする
+	let ticks = computeTicks(range, scale);
+	if (opts.dayDetail) {
+		ticks = { major: [], minor: [], gridX: [] };
+		for (let i = 0; i <= range.days; i++) ticks.gridX.push(i * ppd);
+	}
 
 	const today = new Date();
 	const todayX =
 		today >= range.start && diffDays(range.start, today) <= range.days
 			? diffDays(range.start, today) * ppd + ppd / 2
 			: null;
+
+	// 日詳細モードの休み(土日祝)判定
+	const restDays: { x: number; holiday: boolean }[] = [];
+	if (opts.dayDetail) {
+		for (let i = 0; i <= range.days; i++) {
+			const d = addDays(range.start, i);
+			const dow = d.getDay();
+			const holiday = isJapaneseHoliday(d);
+			if (dow === 0 || dow === 6 || holiday) {
+				restDays.push({ x: i * ppd, holiday: holiday || dow === 0 });
+			}
+		}
+	}
 
 	// 左ペイン幅のドラッグリサイズ(上部固定エリアとチケット行の両方に適用する)
 	const leftEls: HTMLElement[] = [];
@@ -205,19 +238,55 @@ export function renderGantt(
 		);
 	}
 
-	// ヘッダー目盛り(上段: 年月 / 下段: 日・週)
-	for (const tick of ticks.major) {
-		const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
-		t.textContent = tick.label;
-		topSvg.appendChild(t);
-		topSvg.appendChild(
-			svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
-		);
-	}
-	for (const tick of ticks.minor) {
-		const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
-		t.textContent = tick.label;
-		topSvg.appendChild(t);
+	// ヘッダー目盛り
+	if (opts.dayDetail) {
+		// 日詳細モード: 上段に年月、下段に日付+曜日(土=青、日・祝=赤)
+		for (let i = 0; i <= range.days; i++) {
+			const d = addDays(range.start, i);
+			const x = i * ppd;
+			if (d.getDate() === 1 || i === 0) {
+				const t = svg("text", { x: x + 4, y: 15, class: "rg-tick-major" });
+				t.textContent = `${d.getFullYear()}/${d.getMonth() + 1}`;
+				topSvg.appendChild(t);
+				topSvg.appendChild(
+					svg("line", { x1: x, y1: 0, x2: x, y2: HEADER_HEIGHT, class: "rg-grid" })
+				);
+			}
+			const dow = d.getDay();
+			const restClass =
+				isJapaneseHoliday(d) || dow === 0 ? " rg-tick-sun" : dow === 6 ? " rg-tick-sat" : "";
+			const dayText = svg("text", {
+				x: x + ppd / 2,
+				y: 27,
+				"text-anchor": "middle",
+				class: "rg-tick-minor" + restClass,
+			});
+			dayText.textContent = String(d.getDate());
+			topSvg.appendChild(dayText);
+			const dowText = svg("text", {
+				x: x + ppd / 2,
+				y: 38,
+				"text-anchor": "middle",
+				class: "rg-tick-dow" + restClass,
+			});
+			dowText.textContent = DOW_LABELS[dow];
+			topSvg.appendChild(dowText);
+		}
+	} else {
+		// 上段: 年月 / 下段: 日・週
+		for (const tick of ticks.major) {
+			const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
+			t.textContent = tick.label;
+			topSvg.appendChild(t);
+			topSvg.appendChild(
+				svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
+			);
+		}
+		for (const tick of ticks.minor) {
+			const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
+			t.textContent = tick.label;
+			topSvg.appendChild(t);
+		}
 	}
 
 	// 全体予定: 1日の予定は▼マーカー+タイトル、複数日はタイトル入りブロック
@@ -310,13 +379,24 @@ export function renderGantt(
 		link.setAttr("title", taskTooltip(task));
 		if (task.isClosed) row.addClass("rg-row-closed");
 		if (task.isContext) row.addClass("rg-row-context");
+
+		// 右寄せ領域: 担当者チップ+状況バッジ(テーブル表示と同じ並び)
+		const rowRight = row.createDiv({ cls: "rg-left-right" });
 		if (task.assignee) {
-			const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+			const chip = rowRight.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
 			const color = task.isContext ? null : opts.assigneeColor(task.assignee);
 			if (color) {
 				chip.style.backgroundColor = color;
 				chip.addClass("rg-assignee-chip-colored");
 			}
+		}
+		const situation = computeSituation(task);
+		if (situation) {
+			const badge = rowRight.createSpan({
+				cls: `rg-due rg-due-${situation.kind}`,
+				text: situation.text,
+			});
+			if (situation.title) badge.setAttr("title", situation.title);
 		}
 	}
 
@@ -328,11 +408,27 @@ export function renderGantt(
 	});
 	chart.appendChild(root);
 
-	// 週末の背景帯(日スケールのみ)
-	for (const band of weekendBands(range, scale)) {
-		root.appendChild(
-			svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
-		);
+	// 休みの背景帯
+	if (opts.dayDetail) {
+		// 日詳細モード: 土日に加えて日本の祝日も休みとして塗る
+		for (const rest of restDays) {
+			root.appendChild(
+				svg("rect", {
+					x: rest.x,
+					y: 0,
+					width: ppd,
+					height: tasksHeight,
+					class: "rg-weekend" + (rest.holiday ? " rg-holiday" : ""),
+				})
+			);
+		}
+	} else {
+		// 週末の背景帯(日スケールのみ)
+		for (const band of weekendBands(range, scale)) {
+			root.appendChild(
+				svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
+			);
+		}
 	}
 
 	// グリッド縦線・行区切り
@@ -400,13 +496,6 @@ export function renderGantt(
 			svg("line", { x1: todayX, y1: 0, x2: todayX, y2: tasksHeight, class: "rg-today" })
 		);
 	}
-}
-
-export function formatDate(d: Date | null): string {
-	if (!d) return "-";
-	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-		d.getDate()
-	).padStart(2, "0")}`;
 }
 
 function taskTooltip(task: GanttTask): string {
