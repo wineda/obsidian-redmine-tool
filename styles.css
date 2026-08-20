@@ -493,11 +493,16 @@
 .rg-table-group-title {
 	font-weight: 600;
 	color: var(--text-normal);
-	padding: 14px 2px 4px;
+	padding: 3px 10px;
+	margin: 16px 0 6px;
+	border-left: 3px solid var(--interactive-accent);
+	background: var(--background-secondary);
+	border-radius: 0 5px 5px 0;
+	width: fit-content;
 }
 
 .rg-table-group-title:first-child {
-	padding-top: 8px;
+	margin-top: 4px;
 }
 
 .rg-table-wrap {
@@ -539,6 +544,11 @@
 .rg-table td {
 	padding: 1px 8px;
 	border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+/* 行を追いやすいように1行おきに背景を付ける(ホバーが優先) */
+.rg-table tbody tr:nth-child(even) td {
+	background: var(--background-primary-alt);
 }
 
 .rg-table tbody tr:hover td {

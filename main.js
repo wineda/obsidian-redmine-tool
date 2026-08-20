@@ -1226,9 +1226,10 @@ function renderTable(container, model, opts) {
     return;
   }
   const wrap = container.createDiv({ cls: "rg-table-wrap" });
+  const colRegistry = [];
   const groupBy = (_c = opts.groupBy) != null ? _c : "none";
   if (groupBy === "none") {
-    buildTable(wrap, tasks, opts);
+    buildTable(wrap, tasks, opts, colRegistry);
     return;
   }
   const groups = /* @__PURE__ */ new Map();
@@ -1254,10 +1255,10 @@ function renderTable(container, model, opts) {
     const title = wrap.createDiv({ cls: "rg-table-group-title" });
     title.style.fontSize = `${opts.fontSize + 2}px`;
     title.setText(`${label}(${list.length}\u4EF6)`);
-    buildTable(wrap, list, opts);
+    buildTable(wrap, list, opts, colRegistry);
   }
 }
-function buildTable(wrap, tasks, opts) {
+function buildTable(wrap, tasks, opts, colRegistry) {
   const table = wrap.createEl("table", { cls: "rg-table" });
   table.style.fontSize = `${opts.fontSize}px`;
   const colgroup = table.createEl("colgroup");
@@ -1266,6 +1267,7 @@ function buildTable(wrap, tasks, opts) {
     col.style.width = `${opts.widths[i]}px`;
     return col;
   });
+  colRegistry.push(cols);
   const thead = table.createEl("thead");
   const headRow = thead.createEl("tr");
   COLUMNS.forEach((column, i) => {
@@ -1277,7 +1279,9 @@ function buildTable(wrap, tasks, opts) {
       const startWidth = opts.widths[i];
       const onMove = (ev) => {
         opts.widths[i] = Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX);
-        cols[i].style.width = `${opts.widths[i]}px`;
+        for (const tableCols of colRegistry) {
+          tableCols[i].style.width = `${opts.widths[i]}px`;
+        }
       };
       const onUp = () => {
         document.removeEventListener("mousemove", onMove);

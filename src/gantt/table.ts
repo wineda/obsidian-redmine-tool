@@ -63,9 +63,11 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 	}
 
 	const wrap = container.createDiv({ cls: "rg-table-wrap" });
+	// 全テーブルの<col>を列ごとに束ねて、リサイズ時に一括で幅をそろえる
+	const colRegistry: HTMLTableColElement[][] = [];
 	const groupBy = opts.groupBy ?? "none";
 	if (groupBy === "none") {
-		buildTable(wrap, tasks, opts);
+		buildTable(wrap, tasks, opts, colRegistry);
 		return;
 	}
 
@@ -92,11 +94,16 @@ export function renderTable(container: HTMLElement, model: GanttModel, opts: Tab
 		const title = wrap.createDiv({ cls: "rg-table-group-title" });
 		title.style.fontSize = `${opts.fontSize + 2}px`;
 		title.setText(`${label}(${list.length}件)`);
-		buildTable(wrap, list, opts);
+		buildTable(wrap, list, opts, colRegistry);
 	}
 }
 
-function buildTable(wrap: HTMLElement, tasks: GanttTask[], opts: TableOptions): void {
+function buildTable(
+	wrap: HTMLElement,
+	tasks: GanttTask[],
+	opts: TableOptions,
+	colRegistry: HTMLTableColElement[][]
+): void {
 	const table = wrap.createEl("table", { cls: "rg-table" });
 	table.style.fontSize = `${opts.fontSize}px`;
 
@@ -106,12 +113,13 @@ function buildTable(wrap: HTMLElement, tasks: GanttTask[], opts: TableOptions): 
 		col.style.width = `${opts.widths[i]}px`;
 		return col;
 	});
+	colRegistry.push(cols);
 
 	const thead = table.createEl("thead");
 	const headRow = thead.createEl("tr");
 	COLUMNS.forEach((column, i) => {
 		const th = headRow.createEl("th", { text: column.label });
-		// 列幅のドラッグリサイズ
+		// 列幅のドラッグリサイズ(分割表示中の全テーブルに同じ幅を適用する)
 		const resizer = th.createDiv({ cls: "rg-col-resizer" });
 		resizer.addEventListener("mousedown", (e: MouseEvent) => {
 			e.preventDefault();
@@ -119,7 +127,9 @@ function buildTable(wrap: HTMLElement, tasks: GanttTask[], opts: TableOptions): 
 			const startWidth = opts.widths[i];
 			const onMove = (ev: MouseEvent) => {
 				opts.widths[i] = Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX);
-				cols[i].style.width = `${opts.widths[i]}px`;
+				for (const tableCols of colRegistry) {
+					tableCols[i].style.width = `${opts.widths[i]}px`;
+				}
 			};
 			const onUp = () => {
 				document.removeEventListener("mousemove", onMove);
