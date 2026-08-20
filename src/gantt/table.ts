@@ -35,6 +35,8 @@ export interface TableOptions extends RenderOptions {
 	widths: number[];
 	/** 編集ボタン押下時に呼ばれる。未指定なら編集列を出さない */
 	onEdit?: (issueId: number) => void;
+	/** 「Redmineを右側で開く」選択時に呼ばれる。未指定ならメニューに出さない */
+	onOpenInPane?: (issueId: number) => void;
 	/** 題名の部分一致フィルタ(空文字・未指定は無条件) */
 	subjectFilter?: string;
 	/** 状況(期日・納期)による絞り込み */
@@ -191,6 +193,14 @@ function renderRow(tbody: HTMLElement, task: GanttTask, opts: TableOptions): voi
 					new Notice(`#${task.id} をコピーしました`);
 				})
 		);
+		if (opts.onOpenInPane) {
+			menu.addItem((item) =>
+				item
+					.setTitle("Redmineを右側で開く")
+					.setIcon("panel-right")
+					.onClick(() => opts.onOpenInPane!(task.id))
+			);
+		}
 		menu.showAtMouseEvent(e);
 	});
 
