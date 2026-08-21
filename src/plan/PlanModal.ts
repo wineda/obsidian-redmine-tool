@@ -1,10 +1,10 @@
 import { App, Modal, Setting } from "obsidian";
-import { PLAN_STATUS_LABELS, PlanItem, PlanStatus } from "../settings";
+import { PlanItem, PlanKind } from "../settings";
 
 /** よく使う色のプリセット(赤・オレンジ・緑・青・紫) */
 const PLAN_PRESET_COLORS = ["#d9534f", "#e8883a", "#3f9e4d", "#3f7fd9", "#7a5fd0"];
 
-/** 全体予定の一覧編集モーダル。保存を押すまで元データには反映しない */
+/** 予定の一覧編集モーダル。保存を押すまで元データには反映しない */
 export class PlanModal extends Modal {
 	private items: PlanItem[];
 	private onSave: (items: PlanItem[]) => void;
@@ -16,19 +16,72 @@ export class PlanModal extends Modal {
 	}
 
 	onOpen(): void {
+		this.modalEl.addClass("rg-plan-modal");
 		this.render();
 	}
 
 	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.createEl("h3", { text: "全体予定の編集" });
+		contentEl.createEl("h3", { text: "予定の編集" });
 		contentEl.createEl("p", {
 			cls: "rg-plan-desc",
-			text: "Redmineとは独立した予定です。ガントチャートの最上段に表示されます。",
+			text:
+				"Redmineとは独立した予定です。ガントチャート最上段の「全体予定」「個人予定」の行に表示されます。",
 		});
 
-		this.items.forEach((item, index) => {
+		this.renderSection("全体予定", "プロジェクト全体の予定(リリース・イベントなど)", "team");
+		this.renderSection("個人予定", "休暇など個人の予定", "personal");
+
+		new Setting(contentEl)
+			.addButton((button) =>
+				button
+					.setButtonText("保存")
+					.setCta()
+					.onClick(() => {
+						this.onSave(this.items.filter((item) => item.name !== ""));
+						this.close();
+					})
+			)
+			.addButton((button) => button.setButtonText("キャンセル").onClick(() => this.close()));
+	}
+
+	private renderSection(title: string, desc: string, kind: PlanKind): void {
+		const { contentEl } = this;
+		const list = this.items
+			.filter((item) => (item.kind ?? "team") === kind)
+			.sort((a, b) => {
+				// 開始日順(未定は末尾)。編集中の並び替えは再描画時のみ
+				if (!a.start && !b.start) return a.name.localeCompare(b.name, "ja");
+				if (!a.start) return 1;
+				if (!b.start) return -1;
+				return a.start.localeCompare(b.start);
+			});
+
+		new Setting(contentEl)
+			.setName(`${title}(${list.length}件)`)
+			.setHeading()
+			.setDesc(desc)
+			.addButton((button) =>
+				button.setButtonText("追加").onClick(() => {
+					this.items.push({
+						id: `plan-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+						name: "",
+						start: "",
+						end: "",
+						color: "",
+						kind,
+					});
+					this.render();
+				})
+			);
+
+		if (list.length === 0) {
+			contentEl.createDiv({ cls: "rg-plan-empty", text: "予定はありません。" });
+			return;
+		}
+
+		for (const item of list) {
 			const setting = new Setting(contentEl);
 			setting.settingEl.addClass("rg-plan-setting");
 			setting
@@ -50,14 +103,6 @@ export class PlanModal extends Modal {
 					text.inputEl.type = "date";
 					text.setValue(item.end).onChange((value) => {
 						item.end = value;
-					});
-				})
-				.addDropdown((dropdown) => {
-					for (const [value, label] of Object.entries(PLAN_STATUS_LABELS)) {
-						dropdown.addOption(value, label);
-					}
-					dropdown.setValue(item.status).onChange((value) => {
-						item.status = value as PlanStatus;
 					});
 				});
 
@@ -84,7 +129,7 @@ export class PlanModal extends Modal {
 				.addExtraButton((button) =>
 					button
 						.setIcon("rotate-ccw")
-						.setTooltip("色を既定(状態の色)に戻す")
+						.setTooltip("色を既定に戻す")
 						.onClick(() => {
 							item.color = "";
 							this.render();
@@ -95,36 +140,12 @@ export class PlanModal extends Modal {
 						.setIcon("trash")
 						.setTooltip("削除")
 						.onClick(() => {
-							this.items.splice(index, 1);
+							const index = this.items.indexOf(item);
+							if (index >= 0) this.items.splice(index, 1);
 							this.render();
 						})
 				);
-		});
-
-		new Setting(contentEl).addButton((button) =>
-			button.setButtonText("予定を追加").onClick(() => {
-				this.items.push({
-					id: `plan-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-					name: "",
-					start: "",
-					end: "",
-					status: "todo",
-				});
-				this.render();
-			})
-		);
-
-		new Setting(contentEl)
-			.addButton((button) =>
-				button
-					.setButtonText("保存")
-					.setCta()
-					.onClick(() => {
-						this.onSave(this.items.filter((item) => item.name !== ""));
-						this.close();
-					})
-			)
-			.addButton((button) => button.setButtonText("キャンセル").onClick(() => this.close()));
+		}
 	}
 
 	onClose(): void {

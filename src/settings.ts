@@ -31,15 +31,12 @@ export interface AssigneeColor {
 
 export type PlanStatus = "todo" | "doing" | "done";
 
-export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
-	todo: "未着手",
-	doing: "進行中",
-	done: "完了",
-};
+/** 予定の種別。全体=プロジェクト全体の予定、個人=休暇など個人の予定 */
+export type PlanKind = "team" | "personal";
 
 /**
- * 全体予定の項目。Redmineとは独立してプラグイン内(data.json)に保存し、
- * ガントチャートの最上段に表示する。
+ * 予定の項目。Redmineとは独立してプラグイン内(data.json)に保存し、
+ * ガントチャートの最上段(全体予定/個人予定の行)に表示する。
  */
 export interface PlanItem {
 	id: string;
@@ -48,9 +45,12 @@ export interface PlanItem {
 	start: string;
 	/** "YYYY-MM-DD"。未定は空文字 */
 	end: string;
-	status: PlanStatus;
-	/** バーの色 "#rrggbb"。空文字・未設定は状態に応じた既定色 */
+	/** @deprecated 旧バージョンのステータス。表示には使わない(読み捨て互換用) */
+	status?: PlanStatus;
+	/** バーの色 "#rrggbb"。空文字・未設定は種別ごとの既定色 */
 	color?: string;
+	/** 種別。未設定は全体予定として扱う(旧データ互換) */
+	kind?: PlanKind;
 }
 
 export interface RedmineGanttSettings {

@@ -496,7 +496,13 @@ export class GanttView extends ItemView {
 			// 片方だけ設定されている場合は1日分の予定として扱う
 			if (start && !end) end = start;
 			if (!start && end) start = end;
-			return { name: item.name, start, end, status: item.status, color: item.color ?? "" };
+			return {
+				name: item.name,
+				start,
+				end,
+				color: item.color ?? "",
+				kind: item.kind ?? "team",
+			};
 		});
 		return rows.sort((a, b) => {
 			if (!a.start) return 1;

@@ -31,11 +31,6 @@ var import_obsidian8 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
-var PLAN_STATUS_LABELS = {
-  todo: "\u672A\u7740\u624B",
-  doing: "\u9032\u884C\u4E2D",
-  done: "\u5B8C\u4E86"
-};
 var DEFAULT_SETTINGS = {
   baseUrl: "",
   apiKey: "",
@@ -885,18 +880,59 @@ var PlanModal = class extends import_obsidian4.Modal {
     this.onSave = onSave;
   }
   onOpen() {
+    this.modalEl.addClass("rg-plan-modal");
     this.render();
   }
   render() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: "\u5168\u4F53\u4E88\u5B9A\u306E\u7DE8\u96C6" });
+    contentEl.createEl("h3", { text: "\u4E88\u5B9A\u306E\u7DE8\u96C6" });
     contentEl.createEl("p", {
       cls: "rg-plan-desc",
-      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u306E\u6700\u4E0A\u6BB5\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
+      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u6700\u4E0A\u6BB5\u306E\u300C\u5168\u4F53\u4E88\u5B9A\u300D\u300C\u500B\u4EBA\u4E88\u5B9A\u300D\u306E\u884C\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
     });
-    this.items.forEach((item, index) => {
-      var _a;
+    this.renderSection("\u5168\u4F53\u4E88\u5B9A", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5168\u4F53\u306E\u4E88\u5B9A(\u30EA\u30EA\u30FC\u30B9\u30FB\u30A4\u30D9\u30F3\u30C8\u306A\u3069)", "team");
+    this.renderSection("\u500B\u4EBA\u4E88\u5B9A", "\u4F11\u6687\u306A\u3069\u500B\u4EBA\u306E\u4E88\u5B9A", "personal");
+    new import_obsidian4.Setting(contentEl).addButton(
+      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
+        this.onSave(this.items.filter((item) => item.name !== ""));
+        this.close();
+      })
+    ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+  }
+  renderSection(title, desc, kind) {
+    var _a;
+    const { contentEl } = this;
+    const list = this.items.filter((item) => {
+      var _a2;
+      return ((_a2 = item.kind) != null ? _a2 : "team") === kind;
+    }).sort((a, b) => {
+      if (!a.start && !b.start)
+        return a.name.localeCompare(b.name, "ja");
+      if (!a.start)
+        return 1;
+      if (!b.start)
+        return -1;
+      return a.start.localeCompare(b.start);
+    });
+    new import_obsidian4.Setting(contentEl).setName(`${title}(${list.length}\u4EF6)`).setHeading().setDesc(desc).addButton(
+      (button) => button.setButtonText("\u8FFD\u52A0").onClick(() => {
+        this.items.push({
+          id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+          name: "",
+          start: "",
+          end: "",
+          color: "",
+          kind
+        });
+        this.render();
+      })
+    );
+    if (list.length === 0) {
+      contentEl.createDiv({ cls: "rg-plan-empty", text: "\u4E88\u5B9A\u306F\u3042\u308A\u307E\u305B\u3093\u3002" });
+      return;
+    }
+    for (const item of list) {
       const setting = new import_obsidian4.Setting(contentEl);
       setting.settingEl.addClass("rg-plan-setting");
       setting.addText((text) => {
@@ -913,13 +949,6 @@ var PlanModal = class extends import_obsidian4.Modal {
         text.inputEl.type = "date";
         text.setValue(item.end).onChange((value) => {
           item.end = value;
-        });
-      }).addDropdown((dropdown) => {
-        for (const [value, label] of Object.entries(PLAN_STATUS_LABELS)) {
-          dropdown.addOption(value, label);
-        }
-        dropdown.setValue(item.status).onChange((value) => {
-          item.status = value;
         });
       });
       const swatches = setting.controlEl.createDiv({ cls: "rg-plan-swatches" });
@@ -940,35 +969,19 @@ var PlanModal = class extends import_obsidian4.Modal {
           item.color = value;
         });
       }).addExtraButton(
-        (button) => button.setIcon("rotate-ccw").setTooltip("\u8272\u3092\u65E2\u5B9A(\u72B6\u614B\u306E\u8272)\u306B\u623B\u3059").onClick(() => {
+        (button) => button.setIcon("rotate-ccw").setTooltip("\u8272\u3092\u65E2\u5B9A\u306B\u623B\u3059").onClick(() => {
           item.color = "";
           this.render();
         })
       ).addExtraButton(
         (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(() => {
-          this.items.splice(index, 1);
+          const index = this.items.indexOf(item);
+          if (index >= 0)
+            this.items.splice(index, 1);
           this.render();
         })
       );
-    });
-    new import_obsidian4.Setting(contentEl).addButton(
-      (button) => button.setButtonText("\u4E88\u5B9A\u3092\u8FFD\u52A0").onClick(() => {
-        this.items.push({
-          id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
-          name: "",
-          start: "",
-          end: "",
-          status: "todo"
-        });
-        this.render();
-      })
-    );
-    new import_obsidian4.Setting(contentEl).addButton(
-      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
-        this.onSave(this.items.filter((item) => item.name !== ""));
-        this.close();
-      })
-    ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+    }
   }
   onClose() {
     this.contentEl.empty();
@@ -1202,7 +1215,7 @@ function clipSpan(start, end, range) {
   };
 }
 function renderGantt(container, model, plans, scale, range, opts) {
-  var _a, _b;
+  var _a;
   container.empty();
   if (model.tasks.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
@@ -1213,22 +1226,31 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const rowHeight = rowHeightFor(opts.fontSize);
   const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
   const datedPlans = plans.filter((p) => p.start !== null && p.end !== null).sort((a, b) => a.start.getTime() - b.start.getTime());
-  const laneEnds = [];
-  const planLane = /* @__PURE__ */ new Map();
-  for (const plan of datedPlans) {
-    const isSingleDay = diffDays(plan.start, plan.end) === 0;
-    const labelDays = isSingleDay ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
-    const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
-    let lane = laneEnds.findIndex((end) => plan.start > end);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(effectiveEnd);
-    } else {
-      laneEnds[lane] = effectiveEnd;
+  const packLanes = (list) => {
+    const laneEnds = [];
+    const lane = /* @__PURE__ */ new Map();
+    for (const plan of list) {
+      const isSingleDay = diffDays(plan.start, plan.end) === 0;
+      const labelDays = isSingleDay ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
+      const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
+      let index = laneEnds.findIndex((end) => plan.start > end);
+      if (index === -1) {
+        index = laneEnds.length;
+        laneEnds.push(effectiveEnd);
+      } else {
+        laneEnds[index] = effectiveEnd;
+      }
+      lane.set(plan, index);
     }
-    planLane.set(plan, lane);
-  }
-  const planLaneCount = laneEnds.length;
+    return { lane, count: laneEnds.length };
+  };
+  const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
+  const personalPlans = datedPlans.filter((p) => p.kind === "personal");
+  const teamPack = packLanes(teamPlans);
+  const personalPack = packLanes(personalPlans);
+  const planLaneCount = teamPack.count + personalPack.count;
+  const teamTop = HEADER_HEIGHT;
+  const personalTop = teamTop + teamPack.count * rowHeight;
   const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
   const tasksHeight = model.tasks.length * rowHeight;
   const leftWidth = (_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH;
@@ -1285,11 +1307,17 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const leftHeader = leftTop.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
-  if (planLaneCount > 0) {
+  if (teamPack.count > 0) {
     const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-    planLabel.style.height = `${planLaneCount * rowHeight}px`;
+    planLabel.style.height = `${teamPack.count * rowHeight}px`;
     planLabel.style.paddingLeft = "8px";
     planLabel.setText("\u5168\u4F53\u4E88\u5B9A");
+  }
+  if (personalPack.count > 0) {
+    const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
+    planLabel.style.height = `${personalPack.count * rowHeight}px`;
+    planLabel.style.paddingLeft = "8px";
+    planLabel.setText("\u500B\u4EBA\u4E88\u5B9A");
   }
   const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
   const topSvg = svg("svg", {
@@ -1316,13 +1344,14 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   for (let i = 0; i <= planLaneCount; i++) {
     const y = HEADER_HEIGHT + i * rowHeight;
+    const isSeparator = i === planLaneCount || teamPack.count > 0 && personalPack.count > 0 && i === teamPack.count;
     topSvg.appendChild(
       svg("line", {
         x1: 0,
         y1: y,
         x2: chartWidth,
         y2: y,
-        class: i === planLaneCount ? "rg-separator" : "rg-grid"
+        class: isSeparator ? "rg-separator" : "rg-grid"
       })
     );
   }
@@ -1372,69 +1401,75 @@ function renderGantt(container, model, plans, scale, range, opts) {
       topSvg.appendChild(t);
     }
   }
-  for (const plan of datedPlans) {
-    const lane = (_b = planLane.get(plan)) != null ? _b : 0;
-    const y = HEADER_HEIGHT + lane * rowHeight + barPadding;
-    const h = rowHeight - barPadding * 2;
-    const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
-    const group = svg("g", {});
-    const title = svg("title");
-    title.textContent = planTooltip(plan);
-    group.appendChild(title);
-    if (diffDays(plan.start, plan.end) === 0) {
-      if (plan.start < range.start || plan.start > range.end)
-        continue;
-      const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
-      const half = Math.max(5, Math.round(h / 2));
-      const marker = svg("polygon", {
-        points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
-        class: `rg-plan-marker rg-plan-${plan.status}`
-      });
-      if (plan.color)
-        marker.style.fill = plan.color;
-      group.appendChild(marker);
-      const label = svg("text", {
-        x: cx + half + 4,
-        y: textBaseline,
-        "font-size": opts.fontSize,
-        class: `rg-plan-marker-label rg-plan-${plan.status}`
-      });
-      if (plan.color)
-        label.style.fill = plan.color;
-      label.textContent = plan.name;
-      group.appendChild(label);
-    } else {
-      const span = clipSpan(plan.start, plan.end, range);
-      if (!span)
-        continue;
-      const x = diffDays(range.start, span.s) * ppd;
-      const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-      const bar = svg("rect", {
-        x,
-        y,
-        width: w,
-        height: h,
-        rx: 3,
-        class: `rg-plan-bar rg-plan-${plan.status}`
-      });
-      if (plan.color)
-        bar.style.fill = plan.color;
-      group.appendChild(bar);
-      const maxChars = Math.floor((w - 10) / opts.fontSize);
-      if (maxChars >= 2) {
-        const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+  const drawPlans = (list, pack, top) => {
+    var _a2;
+    for (const plan of list) {
+      const lane = (_a2 = pack.lane.get(plan)) != null ? _a2 : 0;
+      const y = top + lane * rowHeight + barPadding;
+      const h = rowHeight - barPadding * 2;
+      const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
+      const kindClass = plan.kind === "personal" ? " rg-plan-personal" : "";
+      const group = svg("g", {});
+      const title = svg("title");
+      title.textContent = planTooltip(plan);
+      group.appendChild(title);
+      if (diffDays(plan.start, plan.end) === 0) {
+        if (plan.start < range.start || plan.start > range.end)
+          continue;
+        const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
+        const half = Math.max(5, Math.round(h / 2));
+        const marker = svg("polygon", {
+          points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+          class: `rg-plan-marker${kindClass}`
+        });
+        if (plan.color)
+          marker.style.fill = plan.color;
+        group.appendChild(marker);
         const label = svg("text", {
-          x: x + 6,
+          x: cx + half + 4,
           y: textBaseline,
           "font-size": opts.fontSize,
-          class: "rg-plan-bar-label"
+          class: `rg-plan-marker-label${kindClass}`
         });
-        label.textContent = name;
+        if (plan.color)
+          label.style.fill = plan.color;
+        label.textContent = plan.name;
         group.appendChild(label);
+      } else {
+        const span = clipSpan(plan.start, plan.end, range);
+        if (!span)
+          continue;
+        const x = diffDays(range.start, span.s) * ppd;
+        const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
+        const bar = svg("rect", {
+          x,
+          y,
+          width: w,
+          height: h,
+          rx: 3,
+          class: `rg-plan-bar${kindClass}`
+        });
+        if (plan.color)
+          bar.style.fill = plan.color;
+        group.appendChild(bar);
+        const maxChars = Math.floor((w - 10) / opts.fontSize);
+        if (maxChars >= 2) {
+          const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+          const label = svg("text", {
+            x: x + 6,
+            y: textBaseline,
+            "font-size": opts.fontSize,
+            class: "rg-plan-bar-label"
+          });
+          label.textContent = name;
+          group.appendChild(label);
+        }
       }
+      topSvg.appendChild(group);
     }
-    topSvg.appendChild(group);
-  }
+  };
+  drawPlans(teamPlans, teamPack, teamTop);
+  drawPlans(personalPlans, personalPack, personalTop);
   if (todayX !== null) {
     topSvg.appendChild(
       svg("line", { x1: todayX, y1: 0, x2: todayX, y2: topHeight, class: "rg-today" })
@@ -1581,7 +1616,7 @@ function planTooltip(plan) {
   return [
     plan.name,
     `\u671F\u9593: ${formatDate(plan.start)} \u301C ${formatDate(plan.end)}`,
-    `\u72B6\u614B: ${PLAN_STATUS_LABELS[plan.status]}`
+    plan.kind === "personal" ? "\u500B\u4EBA\u4E88\u5B9A" : "\u5168\u4F53\u4E88\u5B9A"
   ].join("\n");
 }
 
@@ -2225,7 +2260,7 @@ var GanttView = class extends import_obsidian6.ItemView {
   /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
   planRows() {
     const rows = this.plugin.settings.planItems.map((item) => {
-      var _a;
+      var _a, _b;
       let start = parsePlanDate(item.start);
       let end = parsePlanDate(item.end);
       if (start && end && start > end)
@@ -2234,7 +2269,13 @@ var GanttView = class extends import_obsidian6.ItemView {
         end = start;
       if (!start && end)
         start = end;
-      return { name: item.name, start, end, status: item.status, color: (_a = item.color) != null ? _a : "" };
+      return {
+        name: item.name,
+        start,
+        end,
+        color: (_a = item.color) != null ? _a : "",
+        kind: (_b = item.kind) != null ? _b : "team"
+      };
     });
     return rows.sort((a, b) => {
       if (!a.start)

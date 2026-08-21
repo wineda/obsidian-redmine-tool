@@ -1,5 +1,5 @@
 import type { GanttModel, GanttTask } from "../redmine/mapper";
-import { GanttScale, PLAN_STATUS_LABELS, PlanStatus } from "../settings";
+import { GanttScale, PlanKind } from "../settings";
 import {
 	PX_PER_DAY,
 	TimeRange,
@@ -33,14 +33,15 @@ function svg<K extends keyof SVGElementTagNameMap>(
 	return el;
 }
 
-/** 全体予定の表示用行(日付パース済み) */
+/** 予定の表示用行(日付パース済み) */
 export interface PlanRow {
 	name: string;
 	start: Date | null;
 	end: Date | null;
-	status: PlanStatus;
-	/** バーの色 "#rrggbb"。空文字は状態に応じた既定色 */
+	/** バーの色 "#rrggbb"。空文字は種別ごとの既定色 */
 	color: string;
+	/** 全体予定 / 個人予定 */
+	kind: PlanKind;
 }
 
 export interface RenderOptions {
@@ -103,29 +104,41 @@ export function renderGantt(
 	const rowHeight = rowHeightFor(opts.fontSize);
 	const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
 
-	// 全体予定を重ならないようにレーンへ詰める(日付のない予定はチャートに出せないため除外)
+	// 予定を重ならないようにレーンへ詰める(日付のない予定はチャートに出せないため除外)
+	type DatedPlan = PlanRow & { start: Date; end: Date };
 	const datedPlans = plans
-		.filter((p): p is PlanRow & { start: Date; end: Date } => p.start !== null && p.end !== null)
+		.filter((p): p is DatedPlan => p.start !== null && p.end !== null)
 		.sort((a, b) => a.start.getTime() - b.start.getTime());
-	const laneEnds: Date[] = [];
-	const planLane = new Map<PlanRow, number>();
-	for (const plan of datedPlans) {
-		// 1日予定は▼の右にタイトルが伸びるため、その分の幅もレーン上で確保する
-		const isSingleDay = diffDays(plan.start, plan.end) === 0;
-		const labelDays = isSingleDay
-			? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd)
-			: 0;
-		const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
-		let lane = laneEnds.findIndex((end) => plan.start > end);
-		if (lane === -1) {
-			lane = laneEnds.length;
-			laneEnds.push(effectiveEnd);
-		} else {
-			laneEnds[lane] = effectiveEnd;
+	const packLanes = (list: DatedPlan[]) => {
+		const laneEnds: Date[] = [];
+		const lane = new Map<PlanRow, number>();
+		for (const plan of list) {
+			// 1日予定は▼の右にタイトルが伸びるため、その分の幅もレーン上で確保する
+			const isSingleDay = diffDays(plan.start, plan.end) === 0;
+			const labelDays = isSingleDay
+				? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd)
+				: 0;
+			const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
+			let index = laneEnds.findIndex((end) => plan.start > end);
+			if (index === -1) {
+				index = laneEnds.length;
+				laneEnds.push(effectiveEnd);
+			} else {
+				laneEnds[index] = effectiveEnd;
+			}
+			lane.set(plan, index);
 		}
-		planLane.set(plan, lane);
-	}
-	const planLaneCount = laneEnds.length;
+		return { lane, count: laneEnds.length };
+	};
+
+	// 全体予定と個人予定は別の帯としてレーンを分けて積む
+	const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
+	const personalPlans = datedPlans.filter((p) => p.kind === "personal");
+	const teamPack = packLanes(teamPlans);
+	const personalPack = packLanes(personalPlans);
+	const planLaneCount = teamPack.count + personalPack.count;
+	const teamTop = HEADER_HEIGHT;
+	const personalTop = teamTop + teamPack.count * rowHeight;
 
 	const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
 	const tasksHeight = model.tasks.length * rowHeight;
@@ -193,11 +206,17 @@ export function renderGantt(
 	const leftHeader = leftTop.createDiv({ cls: "rg-left-header" });
 	leftHeader.style.height = `${HEADER_HEIGHT}px`;
 	leftHeader.setText("チケット");
-	if (planLaneCount > 0) {
+	if (teamPack.count > 0) {
 		const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-		planLabel.style.height = `${planLaneCount * rowHeight}px`;
+		planLabel.style.height = `${teamPack.count * rowHeight}px`;
 		planLabel.style.paddingLeft = "8px";
 		planLabel.setText("全体予定");
+	}
+	if (personalPack.count > 0) {
+		const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
+		planLabel.style.height = `${personalPack.count * rowHeight}px`;
+		planLabel.style.paddingLeft = "8px";
+		planLabel.setText("個人予定");
 	}
 
 	const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
@@ -229,13 +248,17 @@ export function renderGantt(
 	}
 	for (let i = 0; i <= planLaneCount; i++) {
 		const y = HEADER_HEIGHT + i * rowHeight;
+		// 最下段と、全体予定/個人予定の境目は太い区切り線にする
+		const isSeparator =
+			i === planLaneCount ||
+			(teamPack.count > 0 && personalPack.count > 0 && i === teamPack.count);
 		topSvg.appendChild(
 			svg("line", {
 				x1: 0,
 				y1: y,
 				x2: chartWidth,
 				y2: y,
-				class: i === planLaneCount ? "rg-separator" : "rg-grid",
+				class: isSeparator ? "rg-separator" : "rg-grid",
 			})
 		);
 	}
@@ -291,69 +314,74 @@ export function renderGantt(
 		}
 	}
 
-	// 全体予定: 1日の予定は▼マーカー+タイトル、複数日はタイトル入りブロック
-	for (const plan of datedPlans) {
-		const lane = planLane.get(plan) ?? 0;
-		const y = HEADER_HEIGHT + lane * rowHeight + barPadding;
-		const h = rowHeight - barPadding * 2;
-		const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
-		const group = svg("g", {});
-		const title = svg("title");
-		title.textContent = planTooltip(plan);
-		group.appendChild(title);
+	// 予定の描画: 1日の予定は▼マーカー+タイトル、複数日はタイトル入りブロック
+	const drawPlans = (list: DatedPlan[], pack: ReturnType<typeof packLanes>, top: number) => {
+		for (const plan of list) {
+			const lane = pack.lane.get(plan) ?? 0;
+			const y = top + lane * rowHeight + barPadding;
+			const h = rowHeight - barPadding * 2;
+			const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
+			const kindClass = plan.kind === "personal" ? " rg-plan-personal" : "";
+			const group = svg("g", {});
+			const title = svg("title");
+			title.textContent = planTooltip(plan);
+			group.appendChild(title);
 
-		if (diffDays(plan.start, plan.end) === 0) {
-			// 1日の予定: ▼マーカーと右側にタイトル
-			if (plan.start < range.start || plan.start > range.end) continue;
-			const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
-			const half = Math.max(5, Math.round(h / 2));
-			const marker = svg("polygon", {
-				points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
-				class: `rg-plan-marker rg-plan-${plan.status}`,
-			});
-			if (plan.color) marker.style.fill = plan.color;
-			group.appendChild(marker);
-			const label = svg("text", {
-				x: cx + half + 4,
-				y: textBaseline,
-				"font-size": opts.fontSize,
-				class: `rg-plan-marker-label rg-plan-${plan.status}`,
-			});
-			if (plan.color) label.style.fill = plan.color;
-			label.textContent = plan.name;
-			group.appendChild(label);
-		} else {
-			// 複数日の予定: ブロック内にタイトル
-			const span = clipSpan(plan.start, plan.end, range);
-			if (!span) continue;
-			const x = diffDays(range.start, span.s) * ppd;
-			const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-			const bar = svg("rect", {
-				x,
-				y,
-				width: w,
-				height: h,
-				rx: 3,
-				class: `rg-plan-bar rg-plan-${plan.status}`,
-			});
-			if (plan.color) bar.style.fill = plan.color;
-			group.appendChild(bar);
-			const maxChars = Math.floor((w - 10) / opts.fontSize);
-			if (maxChars >= 2) {
-				const name =
-					plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "…" : plan.name;
+			if (diffDays(plan.start, plan.end) === 0) {
+				// 1日の予定: ▼マーカーと右側にタイトル
+				if (plan.start < range.start || plan.start > range.end) continue;
+				const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
+				const half = Math.max(5, Math.round(h / 2));
+				const marker = svg("polygon", {
+					points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+					class: `rg-plan-marker${kindClass}`,
+				});
+				if (plan.color) marker.style.fill = plan.color;
+				group.appendChild(marker);
 				const label = svg("text", {
-					x: x + 6,
+					x: cx + half + 4,
 					y: textBaseline,
 					"font-size": opts.fontSize,
-					class: "rg-plan-bar-label",
+					class: `rg-plan-marker-label${kindClass}`,
 				});
-				label.textContent = name;
+				if (plan.color) label.style.fill = plan.color;
+				label.textContent = plan.name;
 				group.appendChild(label);
+			} else {
+				// 複数日の予定: ブロック内にタイトル
+				const span = clipSpan(plan.start, plan.end, range);
+				if (!span) continue;
+				const x = diffDays(range.start, span.s) * ppd;
+				const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
+				const bar = svg("rect", {
+					x,
+					y,
+					width: w,
+					height: h,
+					rx: 3,
+					class: `rg-plan-bar${kindClass}`,
+				});
+				if (plan.color) bar.style.fill = plan.color;
+				group.appendChild(bar);
+				const maxChars = Math.floor((w - 10) / opts.fontSize);
+				if (maxChars >= 2) {
+					const name =
+						plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "…" : plan.name;
+					const label = svg("text", {
+						x: x + 6,
+						y: textBaseline,
+						"font-size": opts.fontSize,
+						class: "rg-plan-bar-label",
+					});
+					label.textContent = name;
+					group.appendChild(label);
+				}
 			}
+			topSvg.appendChild(group);
 		}
-		topSvg.appendChild(group);
-	}
+	};
+	drawPlans(teamPlans, teamPack, teamTop);
+	drawPlans(personalPlans, personalPack, personalTop);
 
 	// 今日の縦線(上部固定エリア側)
 	if (todayX !== null) {
@@ -526,6 +554,6 @@ function planTooltip(plan: PlanRow): string {
 	return [
 		plan.name,
 		`期間: ${formatDate(plan.start)} 〜 ${formatDate(plan.end)}`,
-		`状態: ${PLAN_STATUS_LABELS[plan.status]}`,
+		plan.kind === "personal" ? "個人予定" : "全体予定",
 	].join("\n");
 }

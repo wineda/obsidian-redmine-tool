@@ -395,10 +395,30 @@
 	fill: var(--color-green);
 }
 
-/* ---- 全体予定の編集モーダル ---- */
+/* 個人予定(休暇など)の既定色。予定ごとの色設定があればそちらが優先 */
+.rg-plan-marker.rg-plan-personal,
+.rg-plan-bar.rg-plan-personal {
+	fill: var(--color-cyan);
+}
+
+.rg-plan-marker-label.rg-plan-personal {
+	fill: var(--color-cyan);
+}
+
+/* ---- 予定の編集モーダル ---- */
+.rg-plan-modal {
+	width: min(860px, 95vw);
+}
+
 .rg-plan-desc {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
+}
+
+.rg-plan-empty {
+	color: var(--text-faint);
+	font-size: var(--font-ui-small);
+	padding: 4px 0 8px;
 }
 
 .rg-plan-setting .setting-item-info {
