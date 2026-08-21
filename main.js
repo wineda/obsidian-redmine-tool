@@ -877,6 +877,7 @@ ${message}`);
 
 // src/plan/PlanModal.ts
 var import_obsidian4 = require("obsidian");
+var PLAN_PRESET_COLORS = ["#d9534f", "#e8883a", "#3f9e4d", "#3f7fd9", "#7a5fd0"];
 var PlanModal = class extends import_obsidian4.Modal {
   constructor(app, items, onSave) {
     super(app);
@@ -895,6 +896,7 @@ var PlanModal = class extends import_obsidian4.Modal {
       text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u306E\u6700\u4E0A\u6BB5\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
     });
     this.items.forEach((item, index) => {
+      var _a;
       const setting = new import_obsidian4.Setting(contentEl);
       setting.settingEl.addClass("rg-plan-setting");
       setting.addText((text) => {
@@ -919,7 +921,21 @@ var PlanModal = class extends import_obsidian4.Modal {
         dropdown.setValue(item.status).onChange((value) => {
           item.status = value;
         });
-      }).addColorPicker((picker) => {
+      });
+      const swatches = setting.controlEl.createDiv({ cls: "rg-plan-swatches" });
+      for (const color of PLAN_PRESET_COLORS) {
+        const swatch = swatches.createEl("button", { cls: "rg-plan-swatch" });
+        swatch.style.backgroundColor = color;
+        if (((_a = item.color) != null ? _a : "").toLowerCase() === color)
+          swatch.addClass("is-selected");
+        swatch.setAttr("aria-label", `\u8272: ${color}`);
+        swatch.addEventListener("click", (e) => {
+          e.preventDefault();
+          item.color = color;
+          this.render();
+        });
+      }
+      setting.addColorPicker((picker) => {
         picker.setValue(item.color || "#808080").onChange((value) => {
           item.color = value;
         });

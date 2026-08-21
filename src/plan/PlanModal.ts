@@ -1,6 +1,9 @@
 import { App, Modal, Setting } from "obsidian";
 import { PLAN_STATUS_LABELS, PlanItem, PlanStatus } from "../settings";
 
+/** よく使う色のプリセット(赤・オレンジ・緑・青・紫) */
+const PLAN_PRESET_COLORS = ["#d9534f", "#e8883a", "#3f9e4d", "#3f7fd9", "#7a5fd0"];
+
 /** 全体予定の一覧編集モーダル。保存を押すまで元データには反映しない */
 export class PlanModal extends Modal {
 	private items: PlanItem[];
@@ -56,7 +59,23 @@ export class PlanModal extends Modal {
 					dropdown.setValue(item.status).onChange((value) => {
 						item.status = value as PlanStatus;
 					});
-				})
+				});
+
+			// よく使う色のワンクリック選択
+			const swatches = setting.controlEl.createDiv({ cls: "rg-plan-swatches" });
+			for (const color of PLAN_PRESET_COLORS) {
+				const swatch = swatches.createEl("button", { cls: "rg-plan-swatch" });
+				swatch.style.backgroundColor = color;
+				if ((item.color ?? "").toLowerCase() === color) swatch.addClass("is-selected");
+				swatch.setAttr("aria-label", `色: ${color}`);
+				swatch.addEventListener("click", (e) => {
+					e.preventDefault();
+					item.color = color;
+					this.render();
+				});
+			}
+
+			setting
 				.addColorPicker((picker) => {
 					picker.setValue(item.color || "#808080").onChange((value) => {
 						item.color = value;

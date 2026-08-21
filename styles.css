@@ -414,6 +414,32 @@
 	min-width: 160px;
 }
 
+/* よく使う色のスウォッチ(Obsidianのbutton既定高さを打ち消して丸に整える) */
+.rg-plan-swatches {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.rg-plan-swatch {
+	width: 18px;
+	height: 18px;
+	min-height: 0;
+	padding: 0;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	box-shadow: none;
+	cursor: pointer;
+}
+
+.rg-plan-swatch:hover {
+	border-color: var(--text-muted);
+}
+
+.rg-plan-swatch.is-selected {
+	border-color: var(--text-normal);
+}
+
 /* ---- 表示期間コントロール ---- */
 .rg-range {
 	display: flex;
