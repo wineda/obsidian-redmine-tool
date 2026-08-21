@@ -39,6 +39,8 @@ export interface PlanRow {
 	start: Date | null;
 	end: Date | null;
 	status: PlanStatus;
+	/** バーの色 "#rrggbb"。空文字は状態に応じた既定色 */
+	color: string;
 }
 
 export interface RenderOptions {
@@ -305,18 +307,19 @@ export function renderGantt(
 			if (plan.start < range.start || plan.start > range.end) continue;
 			const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
 			const half = Math.max(5, Math.round(h / 2));
-			group.appendChild(
-				svg("polygon", {
-					points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
-					class: `rg-plan-marker rg-plan-${plan.status}`,
-				})
-			);
+			const marker = svg("polygon", {
+				points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+				class: `rg-plan-marker rg-plan-${plan.status}`,
+			});
+			if (plan.color) marker.style.fill = plan.color;
+			group.appendChild(marker);
 			const label = svg("text", {
 				x: cx + half + 4,
 				y: textBaseline,
 				"font-size": opts.fontSize,
 				class: `rg-plan-marker-label rg-plan-${plan.status}`,
 			});
+			if (plan.color) label.style.fill = plan.color;
 			label.textContent = plan.name;
 			group.appendChild(label);
 		} else {
@@ -325,9 +328,16 @@ export function renderGantt(
 			if (!span) continue;
 			const x = diffDays(range.start, span.s) * ppd;
 			const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-			group.appendChild(
-				svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
-			);
+			const bar = svg("rect", {
+				x,
+				y,
+				width: w,
+				height: h,
+				rx: 3,
+				class: `rg-plan-bar rg-plan-${plan.status}`,
+			});
+			if (plan.color) bar.style.fill = plan.color;
+			group.appendChild(bar);
 			const maxChars = Math.floor((w - 10) / opts.fontSize);
 			if (maxChars >= 2) {
 				const name =

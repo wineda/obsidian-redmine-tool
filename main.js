@@ -919,7 +919,16 @@ var PlanModal = class extends import_obsidian4.Modal {
         dropdown.setValue(item.status).onChange((value) => {
           item.status = value;
         });
+      }).addColorPicker((picker) => {
+        picker.setValue(item.color || "#808080").onChange((value) => {
+          item.color = value;
+        });
       }).addExtraButton(
+        (button) => button.setIcon("rotate-ccw").setTooltip("\u8272\u3092\u65E2\u5B9A(\u72B6\u614B\u306E\u8272)\u306B\u623B\u3059").onClick(() => {
+          item.color = "";
+          this.render();
+        })
+      ).addExtraButton(
         (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(() => {
           this.items.splice(index, 1);
           this.render();
@@ -1361,18 +1370,21 @@ function renderGantt(container, model, plans, scale, range, opts) {
         continue;
       const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
       const half = Math.max(5, Math.round(h / 2));
-      group.appendChild(
-        svg("polygon", {
-          points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
-          class: `rg-plan-marker rg-plan-${plan.status}`
-        })
-      );
+      const marker = svg("polygon", {
+        points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+        class: `rg-plan-marker rg-plan-${plan.status}`
+      });
+      if (plan.color)
+        marker.style.fill = plan.color;
+      group.appendChild(marker);
       const label = svg("text", {
         x: cx + half + 4,
         y: textBaseline,
         "font-size": opts.fontSize,
         class: `rg-plan-marker-label rg-plan-${plan.status}`
       });
+      if (plan.color)
+        label.style.fill = plan.color;
       label.textContent = plan.name;
       group.appendChild(label);
     } else {
@@ -1381,9 +1393,17 @@ function renderGantt(container, model, plans, scale, range, opts) {
         continue;
       const x = diffDays(range.start, span.s) * ppd;
       const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-      group.appendChild(
-        svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
-      );
+      const bar = svg("rect", {
+        x,
+        y,
+        width: w,
+        height: h,
+        rx: 3,
+        class: `rg-plan-bar rg-plan-${plan.status}`
+      });
+      if (plan.color)
+        bar.style.fill = plan.color;
+      group.appendChild(bar);
       const maxChars = Math.floor((w - 10) / opts.fontSize);
       if (maxChars >= 2) {
         const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
@@ -2189,6 +2209,7 @@ var GanttView = class extends import_obsidian6.ItemView {
   /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
   planRows() {
     const rows = this.plugin.settings.planItems.map((item) => {
+      var _a;
       let start = parsePlanDate(item.start);
       let end = parsePlanDate(item.end);
       if (start && end && start > end)
@@ -2197,7 +2218,7 @@ var GanttView = class extends import_obsidian6.ItemView {
         end = start;
       if (!start && end)
         start = end;
-      return { name: item.name, start, end, status: item.status };
+      return { name: item.name, start, end, status: item.status, color: (_a = item.color) != null ? _a : "" };
     });
     return rows.sort((a, b) => {
       if (!a.start)

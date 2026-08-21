@@ -49,6 +49,8 @@ export interface PlanItem {
 	/** "YYYY-MM-DD"。未定は空文字 */
 	end: string;
 	status: PlanStatus;
+	/** バーの色 "#rrggbb"。空文字・未設定は状態に応じた既定色 */
+	color?: string;
 }
 
 export interface RedmineGanttSettings {

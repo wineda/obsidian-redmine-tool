@@ -57,6 +57,20 @@ export class PlanModal extends Modal {
 						item.status = value as PlanStatus;
 					});
 				})
+				.addColorPicker((picker) => {
+					picker.setValue(item.color || "#808080").onChange((value) => {
+						item.color = value;
+					});
+				})
+				.addExtraButton((button) =>
+					button
+						.setIcon("rotate-ccw")
+						.setTooltip("色を既定(状態の色)に戻す")
+						.onClick(() => {
+							item.color = "";
+							this.render();
+						})
+				)
 				.addExtraButton((button) =>
 					button
 						.setIcon("trash")
