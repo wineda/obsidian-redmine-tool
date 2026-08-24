@@ -892,7 +892,7 @@ var PlanModal = class extends import_obsidian4.Modal {
       text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u6700\u4E0A\u6BB5\u306E\u300C\u5168\u4F53\u4E88\u5B9A\u300D\u300C\u500B\u4EBA\u4E88\u5B9A\u300D\u306E\u884C\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
     });
     this.renderSection("\u5168\u4F53\u4E88\u5B9A", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5168\u4F53\u306E\u4E88\u5B9A(\u30EA\u30EA\u30FC\u30B9\u30FB\u30A4\u30D9\u30F3\u30C8\u306A\u3069)", "team");
-    this.renderSection("\u500B\u4EBA\u4E88\u5B9A", "\u4F11\u6687\u306A\u3069\u500B\u4EBA\u306E\u4E88\u5B9A", "personal");
+    this.renderSection("\u500B\u4EBA\u4E88\u5B9A", "\u4F11\u6687\u306A\u3069\u500B\u4EBA\u306E\u4E88\u5B9A\u3002\u62C5\u5F53\u8005\u540D\u3092\u5165\u308C\u308B\u3068\u540C\u3058\u62C5\u5F53\u8005\u306E\u4E88\u5B9A\u304C\u540C\u3058\u884C\u306B\u307E\u3068\u307E\u308A\u307E\u3059", "personal");
     new import_obsidian4.Setting(contentEl).addButton(
       (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
         this.onSave(this.items.filter((item) => item.name !== ""));
@@ -923,7 +923,8 @@ var PlanModal = class extends import_obsidian4.Modal {
           start: "",
           end: "",
           color: "",
-          kind
+          kind,
+          owner: ""
         });
         this.render();
       })
@@ -940,7 +941,17 @@ var PlanModal = class extends import_obsidian4.Modal {
           item.name = value.trim();
         });
         text.inputEl.addClass("rg-plan-name-input");
-      }).addText((text) => {
+      });
+      if (kind === "personal") {
+        setting.addText((text) => {
+          var _a2;
+          text.setPlaceholder("\u62C5\u5F53\u8005\u540D").setValue((_a2 = item.owner) != null ? _a2 : "").onChange((value) => {
+            item.owner = value.trim();
+          });
+          text.inputEl.addClass("rg-plan-owner-input");
+        });
+      }
+      setting.addText((text) => {
         text.inputEl.type = "date";
         text.setValue(item.start).onChange((value) => {
           item.start = value;
@@ -1216,7 +1227,7 @@ function clipSpan(start, end, range) {
   };
 }
 function renderGantt(container, model, plans, scale, range, opts) {
-  var _a;
+  var _a, _b, _c, _d;
   container.empty();
   if (model.tasks.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
@@ -1248,13 +1259,41 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
   const personalPlans = datedPlans.filter((p) => p.kind === "personal");
   const teamPack = packLanes(teamPlans);
-  const personalPack = packLanes(personalPlans);
-  const planLaneCount = teamPack.count + personalPack.count;
+  const personalLaneLabels = [];
+  const personalLaneOf = /* @__PURE__ */ new Map();
+  {
+    const byOwner = /* @__PURE__ */ new Map();
+    for (const plan of personalPlans) {
+      const key2 = ((_a = plan.owner) != null ? _a : "").trim();
+      const list = (_b = byOwner.get(key2)) != null ? _b : [];
+      list.push(plan);
+      byOwner.set(key2, list);
+    }
+    const owners = Array.from(byOwner.keys()).sort((a, b) => {
+      if (a === "")
+        return 1;
+      if (b === "")
+        return -1;
+      return a.localeCompare(b, "ja");
+    });
+    for (const owner of owners) {
+      const pack = packLanes((_c = byOwner.get(owner)) != null ? _c : []);
+      const base = personalLaneLabels.length;
+      for (let i = 0; i < pack.count; i++) {
+        personalLaneLabels.push(i === 0 ? owner || "\u500B\u4EBA\u4E88\u5B9A" : "");
+      }
+      for (const [plan, lane] of pack.lane) {
+        personalLaneOf.set(plan, base + lane);
+      }
+    }
+  }
+  const personalLaneCount = personalLaneLabels.length;
+  const planLaneCount = teamPack.count + personalLaneCount;
   const teamTop = HEADER_HEIGHT;
   const personalTop = teamTop + teamPack.count * rowHeight;
   const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
   const tasksHeight = model.tasks.length * rowHeight;
-  const leftWidth = (_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH;
+  const leftWidth = (_d = opts.leftWidth) != null ? _d : DEFAULT_LEFT_WIDTH;
   let ticks = computeTicks(range, scale);
   if (opts.dayDetail) {
     ticks = { major: [], minor: [], gridX: [] };
@@ -1314,11 +1353,11 @@ function renderGantt(container, model, plans, scale, range, opts) {
     planLabel.style.paddingLeft = "8px";
     planLabel.setText("\u5168\u4F53\u4E88\u5B9A");
   }
-  if (personalPack.count > 0) {
-    const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-    planLabel.style.height = `${personalPack.count * rowHeight}px`;
-    planLabel.style.paddingLeft = "8px";
-    planLabel.setText("\u500B\u4EBA\u4E88\u5B9A");
+  for (const label of personalLaneLabels) {
+    const laneRow = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label rg-plan-owner-row" });
+    laneRow.style.height = `${rowHeight}px`;
+    laneRow.style.paddingLeft = "8px";
+    laneRow.setText(label);
   }
   const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
   const topSvg = svg("svg", {
@@ -1345,7 +1384,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   for (let i = 0; i <= planLaneCount; i++) {
     const y = HEADER_HEIGHT + i * rowHeight;
-    const isSeparator = i === planLaneCount || teamPack.count > 0 && personalPack.count > 0 && i === teamPack.count;
+    const isSeparator = i === planLaneCount || teamPack.count > 0 && personalLaneCount > 0 && i === teamPack.count;
     topSvg.appendChild(
       svg("line", {
         x1: 0,
@@ -1402,10 +1441,10 @@ function renderGantt(container, model, plans, scale, range, opts) {
       topSvg.appendChild(t);
     }
   }
-  const drawPlans = (list, pack, top) => {
+  const drawPlans = (list, laneOf, top) => {
     var _a2;
     for (const plan of list) {
-      const lane = (_a2 = pack.lane.get(plan)) != null ? _a2 : 0;
+      const lane = (_a2 = laneOf.get(plan)) != null ? _a2 : 0;
       const y = top + lane * rowHeight + barPadding;
       const h = rowHeight - barPadding * 2;
       const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
@@ -1482,8 +1521,8 @@ function renderGantt(container, model, plans, scale, range, opts) {
       topSvg.appendChild(group);
     }
   };
-  drawPlans(teamPlans, teamPack, teamTop);
-  drawPlans(personalPlans, personalPack, personalTop);
+  drawPlans(teamPlans, teamPack.lane, teamTop);
+  drawPlans(personalPlans, personalLaneOf, personalTop);
   if (todayX !== null) {
     topSvg.appendChild(
       svg("line", { x1: todayX, y1: 0, x2: todayX, y2: topHeight, class: "rg-today" })
@@ -1638,11 +1677,14 @@ function taskTooltip(task) {
   return lines.join("\n");
 }
 function planTooltip(plan) {
-  return [
+  const lines = [
     plan.name,
     `\u671F\u9593: ${formatDate(plan.start)} \u301C ${formatDate(plan.end)}`,
     plan.kind === "personal" ? "\u500B\u4EBA\u4E88\u5B9A" : "\u5168\u4F53\u4E88\u5B9A"
-  ].join("\n");
+  ];
+  if (plan.kind === "personal" && plan.owner)
+    lines.push(`\u62C5\u5F53: ${plan.owner}`);
+  return lines.join("\n");
 }
 
 // src/gantt/table.ts
@@ -2282,7 +2324,7 @@ var GanttView = class extends import_obsidian6.ItemView {
   /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
   planRows() {
     const rows = this.plugin.settings.planItems.map((item) => {
-      var _a, _b;
+      var _a, _b, _c;
       let start = parsePlanDate(item.start);
       let end = parsePlanDate(item.end);
       if (start && end && start > end)
@@ -2296,7 +2338,8 @@ var GanttView = class extends import_obsidian6.ItemView {
         start,
         end,
         color: (_a = item.color) != null ? _a : "",
-        kind: (_b = item.kind) != null ? _b : "team"
+        kind: (_b = item.kind) != null ? _b : "team",
+        owner: (_c = item.owner) != null ? _c : ""
       };
     });
     return rows.sort((a, b) => {

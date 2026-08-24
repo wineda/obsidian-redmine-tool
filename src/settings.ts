@@ -51,6 +51,8 @@ export interface PlanItem {
 	color?: string;
 	/** 種別。未設定は全体予定として扱う(旧データ互換) */
 	kind?: PlanKind;
+	/** 個人予定の担当者名。同じ担当者の予定はガントで同じ行にまとめる */
+	owner?: string;
 }
 
 export interface RedmineGanttSettings {

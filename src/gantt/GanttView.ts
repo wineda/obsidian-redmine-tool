@@ -500,6 +500,7 @@ export class GanttView extends ItemView {
 				end,
 				color: item.color ?? "",
 				kind: item.kind ?? "team",
+				owner: item.owner ?? "",
 			};
 		});
 		return rows.sort((a, b) => {

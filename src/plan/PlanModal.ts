@@ -31,7 +31,7 @@ export class PlanModal extends Modal {
 		});
 
 		this.renderSection("全体予定", "プロジェクト全体の予定(リリース・イベントなど)", "team");
-		this.renderSection("個人予定", "休暇など個人の予定", "personal");
+		this.renderSection("個人予定", "休暇など個人の予定。担当者名を入れると同じ担当者の予定が同じ行にまとまります", "personal");
 
 		new Setting(contentEl)
 			.addButton((button) =>
@@ -71,6 +71,7 @@ export class PlanModal extends Modal {
 						end: "",
 						color: "",
 						kind,
+						owner: "",
 					});
 					this.render();
 				})
@@ -92,7 +93,19 @@ export class PlanModal extends Modal {
 							item.name = value.trim();
 						});
 					text.inputEl.addClass("rg-plan-name-input");
-				})
+				});
+			if (kind === "personal") {
+				// 同じ担当者の予定はガントで同じ行にまとまる
+				setting.addText((text) => {
+					text.setPlaceholder("担当者名")
+						.setValue(item.owner ?? "")
+						.onChange((value) => {
+							item.owner = value.trim();
+						});
+					text.inputEl.addClass("rg-plan-owner-input");
+				});
+			}
+			setting
 				.addText((text) => {
 					text.inputEl.type = "date";
 					text.setValue(item.start).onChange((value) => {

@@ -44,6 +44,8 @@ export interface PlanRow {
 	color: string;
 	/** 全体予定 / 個人予定 */
 	kind: PlanKind;
+	/** 個人予定の担当者名(同じ担当者は同じ行にまとめる) */
+	owner?: string;
 }
 
 export interface RenderOptions {
@@ -138,8 +140,37 @@ export function renderGantt(
 	const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
 	const personalPlans = datedPlans.filter((p) => p.kind === "personal");
 	const teamPack = packLanes(teamPlans);
-	const personalPack = packLanes(personalPlans);
-	const planLaneCount = teamPack.count + personalPack.count;
+
+	// 個人予定は担当者ごとにレーンをまとめる(同一担当者の予定が重なる場合のみ行を増やす)
+	const personalLaneLabels: string[] = [];
+	const personalLaneOf = new Map<PlanRow, number>();
+	{
+		const byOwner = new Map<string, DatedPlan[]>();
+		for (const plan of personalPlans) {
+			const key = (plan.owner ?? "").trim();
+			const list = byOwner.get(key) ?? [];
+			list.push(plan);
+			byOwner.set(key, list);
+		}
+		const owners = Array.from(byOwner.keys()).sort((a, b) => {
+			if (a === "") return 1;
+			if (b === "") return -1;
+			return a.localeCompare(b, "ja");
+		});
+		for (const owner of owners) {
+			const pack = packLanes(byOwner.get(owner) ?? []);
+			const base = personalLaneLabels.length;
+			for (let i = 0; i < pack.count; i++) {
+				personalLaneLabels.push(i === 0 ? owner || "個人予定" : "");
+			}
+			for (const [plan, lane] of pack.lane) {
+				personalLaneOf.set(plan, base + lane);
+			}
+		}
+	}
+	const personalLaneCount = personalLaneLabels.length;
+
+	const planLaneCount = teamPack.count + personalLaneCount;
 	const teamTop = HEADER_HEIGHT;
 	const personalTop = teamTop + teamPack.count * rowHeight;
 
@@ -215,11 +246,11 @@ export function renderGantt(
 		planLabel.style.paddingLeft = "8px";
 		planLabel.setText("全体予定");
 	}
-	if (personalPack.count > 0) {
-		const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-		planLabel.style.height = `${personalPack.count * rowHeight}px`;
-		planLabel.style.paddingLeft = "8px";
-		planLabel.setText("個人予定");
+	for (const label of personalLaneLabels) {
+		const laneRow = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label rg-plan-owner-row" });
+		laneRow.style.height = `${rowHeight}px`;
+		laneRow.style.paddingLeft = "8px";
+		laneRow.setText(label);
 	}
 
 	const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
@@ -254,7 +285,7 @@ export function renderGantt(
 		// 最下段と、全体予定/個人予定の境目は太い区切り線にする
 		const isSeparator =
 			i === planLaneCount ||
-			(teamPack.count > 0 && personalPack.count > 0 && i === teamPack.count);
+			(teamPack.count > 0 && personalLaneCount > 0 && i === teamPack.count);
 		topSvg.appendChild(
 			svg("line", {
 				x1: 0,
@@ -318,9 +349,9 @@ export function renderGantt(
 	}
 
 	// 予定の描画: 1日の予定は▼マーカー+タイトル、複数日はタイトル入りブロック
-	const drawPlans = (list: DatedPlan[], pack: ReturnType<typeof packLanes>, top: number) => {
+	const drawPlans = (list: DatedPlan[], laneOf: Map<PlanRow, number>, top: number) => {
 		for (const plan of list) {
-			const lane = pack.lane.get(plan) ?? 0;
+			const lane = laneOf.get(plan) ?? 0;
 			const y = top + lane * rowHeight + barPadding;
 			const h = rowHeight - barPadding * 2;
 			const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
@@ -395,8 +426,8 @@ export function renderGantt(
 			topSvg.appendChild(group);
 		}
 	};
-	drawPlans(teamPlans, teamPack, teamTop);
-	drawPlans(personalPlans, personalPack, personalTop);
+	drawPlans(teamPlans, teamPack.lane, teamTop);
+	drawPlans(personalPlans, personalLaneOf, personalTop);
 
 	// 今日の縦線(上部固定エリア側)
 	if (todayX !== null) {
@@ -580,9 +611,11 @@ function taskTooltip(task: GanttTask): string {
 }
 
 function planTooltip(plan: PlanRow): string {
-	return [
+	const lines = [
 		plan.name,
 		`期間: ${formatDate(plan.start)} 〜 ${formatDate(plan.end)}`,
 		plan.kind === "personal" ? "個人予定" : "全体予定",
-	].join("\n");
+	];
+	if (plan.kind === "personal" && plan.owner) lines.push(`担当: ${plan.owner}`);
+	return lines.join("\n");
 }

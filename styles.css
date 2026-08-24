@@ -388,6 +388,14 @@
 	color: var(--text-muted);
 }
 
+/* 個人予定の担当者レーン行(左ペイン) */
+.rg-plan-owner-row {
+	font-weight: 500;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 .rg-plan-marker {
 	fill: var(--text-faint);
 }
@@ -478,6 +486,10 @@
 
 .rg-plan-name-input {
 	min-width: 160px;
+}
+
+.rg-plan-owner-input {
+	min-width: 100px;
 }
 
 /* よく使う色のスウォッチ(Obsidianのbutton既定高さを打ち消して丸に整える) */
