@@ -1894,6 +1894,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     this.rangeControls = null;
     this.monthInput = null;
     this.assigneePanel = null;
+    this.legendEl = null;
     this.assigneeBtn = null;
     this.loading = false;
     this.lastFetchedAt = null;
@@ -2071,13 +2072,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
     (0, import_obsidian6.setIcon)(planBtn, "calendar-range");
     planBtn.setAttr("aria-label", "\u5168\u4F53\u4E88\u5B9A\u3092\u7DE8\u96C6");
-    planBtn.addEventListener("click", () => {
-      new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
-        this.plugin.settings.planItems = items;
-        void this.plugin.saveSettings();
-        this.renderView();
-      }).open();
-    });
+    planBtn.addEventListener("click", () => this.openPlanModal());
     this.statusEl = toolbar.createDiv({ cls: "rg-status" });
     this.assigneePanel = toolbar.createDiv({ cls: "rg-assignee-panel" });
     this.assigneePanel.hide();
@@ -2088,6 +2083,8 @@ var GanttView = class extends import_obsidian6.ItemView {
         this.assigneePanel.hide();
       }
     });
+    this.legendEl = container.createDiv({ cls: "rg-plan-legend" });
+    this.legendEl.hide();
     this.chartEl = container.createDiv({ cls: "rg-chart-container" });
     this.updateScaleVisibility();
     await this.refresh();
@@ -2315,6 +2312,44 @@ var GanttView = class extends import_obsidian6.ItemView {
     this.renderView();
   }
   /** 表示側フィルタを適用して再描画する(再取得はしない) */
+  /** ガント表示時の全体予定の凡例(カラーキー)。クリックで予定の編集を開く */
+  renderLegend() {
+    const legend = this.legendEl;
+    if (!legend)
+      return;
+    legend.empty();
+    const teamPlans = this.plugin.settings.planItems.filter(
+      (item) => {
+        var _a;
+        return item.name !== "" && ((_a = item.kind) != null ? _a : "team") !== "personal";
+      }
+    );
+    if (this.plugin.settings.viewMode !== "gantt" || teamPlans.length === 0) {
+      legend.hide();
+      return;
+    }
+    legend.show();
+    legend.createSpan({ cls: "rg-legend-title", text: "\u5168\u4F53\u4E88\u5B9A:" });
+    for (const item of teamPlans) {
+      const entry = legend.createSpan({ cls: "rg-legend-item" });
+      const dot = entry.createSpan({ cls: "rg-legend-dot" });
+      if (item.color)
+        dot.style.backgroundColor = item.color;
+      entry.createSpan({ text: item.name });
+      if (item.start || item.end) {
+        entry.setAttr("title", `${item.start || "?"} \u301C ${item.end || "?"}`);
+      }
+      entry.addEventListener("click", () => this.openPlanModal());
+    }
+  }
+  /** 予定の編集モーダルを開く(ツールバー・凡例・コマンドから共用) */
+  openPlanModal() {
+    new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
+      this.plugin.settings.planItems = items;
+      void this.plugin.saveSettings();
+      this.renderView();
+    }).open();
+  }
   renderView() {
     if (!this.chartEl || !this.rawIssues)
       return;
@@ -2352,6 +2387,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     const suffix = this.lastFetchedAt ? ` / \u6700\u7D42\u66F4\u65B0 ${this.lastFetchedAt}` : "";
     const shown = issues.length - contextIds.size;
     this.setStatus(`\u8868\u793A ${shown} / \u53D6\u5F97 ${this.rawIssues.length}\u4EF6${suffix}`);
+    this.renderLegend();
   }
   /** チケット編集モーダルを開き、保存後は該当チケットだけ差し替えて再描画する */
   openEditModal(issueId) {
@@ -2455,6 +2491,17 @@ var RedmineGanttPlugin = class extends import_obsidian8.Plugin {
     this.registerView(VIEW_TYPE_REDMINE_WEB, (leaf) => new RedmineWebView(leaf, this));
     this.addRibbonIcon("gantt-chart", "Redmine Gantt \u3092\u958B\u304F", () => {
       void this.activateView();
+    });
+    this.addCommand({
+      id: "edit-plans",
+      name: "\u5168\u4F53\u4E88\u5B9A\u30FB\u500B\u4EBA\u4E88\u5B9A\u3092\u7DE8\u96C6",
+      callback: () => {
+        new PlanModal(this.app, this.settings.planItems, (items) => {
+          this.settings.planItems = items;
+          void this.saveSettings();
+          this.refreshGanttViews();
+        }).open();
+      }
     });
     this.addCommand({
       id: "open-gantt-view",

@@ -5,6 +5,7 @@ import {
 	RedmineGanttSettingTab,
 } from "./settings";
 import { GanttView, VIEW_TYPE_REDMINE_GANTT } from "./gantt/GanttView";
+import { PlanModal } from "./plan/PlanModal";
 import { RedmineWebView, VIEW_TYPE_REDMINE_WEB } from "./web/RedmineWebView";
 
 export default class RedmineGanttPlugin extends Plugin {
@@ -18,6 +19,18 @@ export default class RedmineGanttPlugin extends Plugin {
 
 		this.addRibbonIcon("gantt-chart", "Redmine Gantt を開く", () => {
 			void this.activateView();
+		});
+
+		this.addCommand({
+			id: "edit-plans",
+			name: "全体予定・個人予定を編集",
+			callback: () => {
+				new PlanModal(this.app, this.settings.planItems, (items) => {
+					this.settings.planItems = items;
+					void this.saveSettings();
+					this.refreshGanttViews();
+				}).open();
+			},
 		});
 
 		this.addCommand({

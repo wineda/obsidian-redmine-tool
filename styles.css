@@ -34,6 +34,43 @@
 	font-size: var(--font-ui-small);
 }
 
+/* ---- 全体予定の凡例(カラーキー) ---- */
+.rg-plan-legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 12px;
+	padding: 4px 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	font-size: var(--font-ui-smaller);
+	flex: 0 0 auto;
+}
+
+.rg-legend-title {
+	color: var(--text-muted);
+	font-weight: 600;
+}
+
+.rg-legend-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	cursor: pointer;
+	color: var(--text-normal);
+}
+
+.rg-legend-item:hover {
+	color: var(--text-accent);
+}
+
+.rg-legend-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 3px;
+	background: var(--text-faint);
+	flex: 0 0 auto;
+}
+
 /* ---- チャート全体 ---- */
 .rg-chart-container {
 	flex: 1 1 auto;

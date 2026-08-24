@@ -50,6 +50,7 @@ export class GanttView extends ItemView {
 	private rangeControls: HTMLElement | null = null;
 	private monthInput: HTMLInputElement | null = null;
 	private assigneePanel: HTMLElement | null = null;
+	private legendEl: HTMLElement | null = null;
 	private assigneeBtn: HTMLElement | null = null;
 	private loading = false;
 	private lastFetchedAt: string | null = null;
@@ -262,13 +263,7 @@ export class GanttView extends ItemView {
 		const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
 		setIcon(planBtn, "calendar-range");
 		planBtn.setAttr("aria-label", "全体予定を編集");
-		planBtn.addEventListener("click", () => {
-			new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
-				this.plugin.settings.planItems = items;
-				void this.plugin.saveSettings();
-				this.renderView();
-			}).open();
-		});
+		planBtn.addEventListener("click", () => this.openPlanModal());
 
 		this.statusEl = toolbar.createDiv({ cls: "rg-status" });
 
@@ -285,6 +280,9 @@ export class GanttView extends ItemView {
 				this.assigneePanel.hide();
 			}
 		});
+
+		this.legendEl = container.createDiv({ cls: "rg-plan-legend" });
+		this.legendEl.hide();
 
 		this.chartEl = container.createDiv({ cls: "rg-chart-container" });
 		this.updateScaleVisibility();
@@ -517,6 +515,41 @@ export class GanttView extends ItemView {
 	}
 
 	/** 表示側フィルタを適用して再描画する(再取得はしない) */
+	/** ガント表示時の全体予定の凡例(カラーキー)。クリックで予定の編集を開く */
+	private renderLegend(): void {
+		const legend = this.legendEl;
+		if (!legend) return;
+		legend.empty();
+		const teamPlans = this.plugin.settings.planItems.filter(
+			(item) => item.name !== "" && (item.kind ?? "team") !== "personal"
+		);
+		if (this.plugin.settings.viewMode !== "gantt" || teamPlans.length === 0) {
+			legend.hide();
+			return;
+		}
+		legend.show();
+		legend.createSpan({ cls: "rg-legend-title", text: "全体予定:" });
+		for (const item of teamPlans) {
+			const entry = legend.createSpan({ cls: "rg-legend-item" });
+			const dot = entry.createSpan({ cls: "rg-legend-dot" });
+			if (item.color) dot.style.backgroundColor = item.color;
+			entry.createSpan({ text: item.name });
+			if (item.start || item.end) {
+				entry.setAttr("title", `${item.start || "?"} 〜 ${item.end || "?"}`);
+			}
+			entry.addEventListener("click", () => this.openPlanModal());
+		}
+	}
+
+	/** 予定の編集モーダルを開く(ツールバー・凡例・コマンドから共用) */
+	openPlanModal(): void {
+		new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
+			this.plugin.settings.planItems = items;
+			void this.plugin.saveSettings();
+			this.renderView();
+		}).open();
+	}
+
 	private renderView(): void {
 		if (!this.chartEl || !this.rawIssues) return;
 		const { issues, contextIds } = this.visibleIssues();
@@ -558,6 +591,7 @@ export class GanttView extends ItemView {
 		const suffix = this.lastFetchedAt ? ` / 最終更新 ${this.lastFetchedAt}` : "";
 		const shown = issues.length - contextIds.size;
 		this.setStatus(`表示 ${shown} / 取得 ${this.rawIssues.length}件${suffix}`);
+		this.renderLegend();
 	}
 
 	/** チケット編集モーダルを開き、保存後は該当チケットだけ差し替えて再描画する */
