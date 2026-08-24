@@ -10,6 +10,8 @@ import {
 } from "./scale";
 
 const HEADER_HEIGHT = 40;
+// この日数以下の予定・チケットは、バーの中ではなく右側にタイトルを表示する
+const SHORT_LABEL_DAYS = 3;
 export const DEFAULT_LEFT_WIDTH = 480;
 const MIN_LEFT_WIDTH = 200;
 const INDENT = 16;
@@ -93,11 +95,12 @@ export function renderGantt(
 	const laneEnds: Date[] = [];
 	const planLane = new Map<PlanRow, number>();
 	for (const plan of datedPlans) {
-		// 1日予定は▼の右にタイトルが伸びるため、その分の幅もレーン上で確保する
-		const isSingleDay = diffDays(plan.start, plan.end) === 0;
-		const labelDays = isSingleDay
-			? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd)
-			: 0;
+		// 3日以内の予定はタイトルがバーの右に伸びるため、その分の幅もレーン上で確保する
+		const durationDays = diffDays(plan.start, plan.end) + 1;
+		const labelDays =
+			durationDays <= SHORT_LABEL_DAYS
+				? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd)
+				: 0;
 		const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
 		let lane = laneEnds.findIndex((end) => plan.start > end);
 		if (lane === -1) {
@@ -251,7 +254,7 @@ export function renderGantt(
 			label.textContent = plan.name;
 			group.appendChild(label);
 		} else {
-			// 複数日の予定: ブロック内にタイトル
+			// 複数日の予定: ブロック表示。3日以内はタイトルを右側に、それ以上はブロック内に描く
 			const span = clipSpan(plan.start, plan.end, range);
 			if (!span) continue;
 			const x = diffDays(range.start, span.s) * ppd;
@@ -259,18 +262,29 @@ export function renderGantt(
 			group.appendChild(
 				svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
 			);
-			const maxChars = Math.floor((w - 10) / opts.fontSize);
-			if (maxChars >= 2) {
-				const name =
-					plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "…" : plan.name;
+			if (diffDays(plan.start, plan.end) + 1 <= SHORT_LABEL_DAYS) {
 				const label = svg("text", {
-					x: x + 6,
+					x: x + w + 4,
 					y: textBaseline,
 					"font-size": opts.fontSize,
-					class: "rg-plan-bar-label",
+					class: `rg-plan-marker-label rg-plan-${plan.status}`,
 				});
-				label.textContent = name;
+				label.textContent = plan.name;
 				group.appendChild(label);
+			} else {
+				const maxChars = Math.floor((w - 10) / opts.fontSize);
+				if (maxChars >= 2) {
+					const name =
+						plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "…" : plan.name;
+					const label = svg("text", {
+						x: x + 6,
+						y: textBaseline,
+						"font-size": opts.fontSize,
+						class: "rg-plan-bar-label",
+					});
+					label.textContent = name;
+					group.appendChild(label);
+				}
 			}
 		}
 		topSvg.appendChild(group);
@@ -386,6 +400,22 @@ export function renderGantt(
 			});
 			if (assigneeColor && !task.isClosed) progress.style.fill = assigneeColor;
 			group.appendChild(progress);
+		}
+
+		// 3日以内の短いチケットは、バーの右側に題名を表示して判別しやすくする
+		if (diffDays(task.start, task.due) + 1 <= SHORT_LABEL_DAYS) {
+			const labelClass =
+				"rg-bar-label" +
+				(task.isClosed ? " rg-bar-label-muted" : "") +
+				(task.isContext ? " rg-bar-label-muted" : "");
+			const label = svg("text", {
+				x: x + w + 4,
+				y: y + Math.round(h / 2 + opts.fontSize * 0.35),
+				"font-size": opts.fontSize,
+				class: labelClass,
+			});
+			label.textContent = task.subject;
+			group.appendChild(label);
 		}
 
 		group.addEventListener("click", () => {

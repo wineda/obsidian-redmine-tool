@@ -862,6 +862,7 @@ function weekendBands(range, scale) {
 
 // src/gantt/renderer.ts
 var HEADER_HEIGHT = 40;
+var SHORT_LABEL_DAYS = 3;
 var DEFAULT_LEFT_WIDTH = 480;
 var MIN_LEFT_WIDTH = 200;
 var INDENT = 16;
@@ -899,8 +900,8 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const laneEnds = [];
   const planLane = /* @__PURE__ */ new Map();
   for (const plan of datedPlans) {
-    const isSingleDay = diffDays(plan.start, plan.end) === 0;
-    const labelDays = isSingleDay ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
+    const durationDays = diffDays(plan.start, plan.end) + 1;
+    const labelDays = durationDays <= SHORT_LABEL_DAYS ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
     const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
     let lane = laneEnds.findIndex((end) => plan.start > end);
     if (lane === -1) {
@@ -1043,17 +1044,28 @@ function renderGantt(container, model, plans, scale, range, opts) {
       group.appendChild(
         svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
       );
-      const maxChars = Math.floor((w - 10) / opts.fontSize);
-      if (maxChars >= 2) {
-        const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+      if (diffDays(plan.start, plan.end) + 1 <= SHORT_LABEL_DAYS) {
         const label = svg("text", {
-          x: x + 6,
+          x: x + w + 4,
           y: textBaseline,
           "font-size": opts.fontSize,
-          class: "rg-plan-bar-label"
+          class: `rg-plan-marker-label rg-plan-${plan.status}`
         });
-        label.textContent = name;
+        label.textContent = plan.name;
         group.appendChild(label);
+      } else {
+        const maxChars = Math.floor((w - 10) / opts.fontSize);
+        if (maxChars >= 2) {
+          const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+          const label = svg("text", {
+            x: x + 6,
+            y: textBaseline,
+            "font-size": opts.fontSize,
+            class: "rg-plan-bar-label"
+          });
+          label.textContent = name;
+          group.appendChild(label);
+        }
       }
     }
     topSvg.appendChild(group);
@@ -1149,6 +1161,17 @@ function renderGantt(container, model, plans, scale, range, opts) {
       if (assigneeColor && !task.isClosed)
         progress.style.fill = assigneeColor;
       group.appendChild(progress);
+    }
+    if (diffDays(task.start, task.due) + 1 <= SHORT_LABEL_DAYS) {
+      const labelClass = "rg-bar-label" + (task.isClosed ? " rg-bar-label-muted" : "") + (task.isContext ? " rg-bar-label-muted" : "");
+      const label = svg("text", {
+        x: x + w + 4,
+        y: y + Math.round(h / 2 + opts.fontSize * 0.35),
+        "font-size": opts.fontSize,
+        class: labelClass
+      });
+      label.textContent = task.subject;
+      group.appendChild(label);
     }
     group.addEventListener("click", () => {
       window.open(opts.issueUrl(task.id));

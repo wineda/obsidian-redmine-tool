@@ -334,6 +334,15 @@
 	pointer-events: none;
 }
 
+/* 短いチケットバーの右側に出す題名 */
+.rg-bar-label {
+	fill: var(--text-muted);
+}
+
+.rg-bar-label.rg-bar-label-muted {
+	fill: var(--text-faint);
+}
+
 .rg-plan-bar {
 	fill: var(--text-faint);
 	opacity: 0.75;
