@@ -22,6 +22,8 @@ export interface RedmineIssue {
 	assigned_to?: RedmineNamedRef;
 	fixed_version?: RedmineNamedRef;
 	parent?: { id: number };
+	/** include=children 付きで取得したときのみ入る直下の子チケット */
+	children?: { id: number; subject?: string }[];
 	start_date?: string; // "YYYY-MM-DD"
 	due_date?: string; // "YYYY-MM-DD"
 	done_ratio: number; // 0-100

@@ -13,9 +13,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -27,15 +27,10 @@ __export(main_exports, {
   default: () => RedmineGanttPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
-var PLAN_STATUS_LABELS = {
-  todo: "\u672A\u7740\u624B",
-  doing: "\u9032\u884C\u4E2D",
-  done: "\u5B8C\u4E86"
-};
 var DEFAULT_SETTINGS = {
   baseUrl: "",
   apiKey: "",
@@ -45,7 +40,8 @@ var DEFAULT_SETTINGS = {
   viewMode: "gantt",
   planItems: [],
   assigneeColors: [],
-  tableFontSize: 11
+  tableFontSize: 11,
+  openIssueInWebView: true
 };
 var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -88,6 +84,15 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
         this.plugin.refreshGanttViews();
         this.display();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Redmine\u30D3\u30E5\u30FC\u3067\u958B\u304F").setDesc(
+      "\u30C6\u30FC\u30D6\u30EB\u306E\u53F3\u30AF\u30EA\u30C3\u30AF\u30E1\u30CB\u30E5\u30FC\u306B\u300CRedmine\u3092\u53F3\u5074\u3067\u958B\u304F\u300D\u3092\u8FFD\u52A0\u3057\u3001Obsidian\u5185\u306E\u5206\u5272\u30DA\u30A4\u30F3\u3067Redmine\u672C\u4F53\u3092\u8868\u793A\u3057\u307E\u3059(\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248\u306E\u307F)\u3002\u30AA\u30D5\u306B\u3059\u308B\u3068\u30E1\u30CB\u30E5\u30FC\u9805\u76EE\u306F\u8868\u793A\u3055\u308C\u307E\u305B\u3093\u3002"
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.openIssueInWebView).onChange(async (value) => {
+        this.plugin.settings.openIssueInWebView = value;
+        await this.plugin.saveSettings();
+        this.plugin.refreshGanttViews();
       })
     );
     new import_obsidian.Setting(containerEl).setName("\u8868\u793A\u30D5\u30A3\u30EB\u30BF").setHeading().setDesc(
@@ -201,6 +206,12 @@ var RedmineClient = class {
     if (body !== void 0) {
       headers["Content-Type"] = "application/json";
     }
+    if (method === "PUT") {
+      console.log(
+        `[Redmine Gantt] ${method} ${url} \u30EA\u30AF\u30A8\u30B9\u30C8`,
+        body !== void 0 ? JSON.stringify(body) : "(\u30DC\u30C7\u30A3\u306A\u3057)"
+      );
+    }
     let response;
     try {
       response = await (0, import_obsidian2.requestUrl)({
@@ -211,10 +222,17 @@ var RedmineClient = class {
         throw: false
       });
     } catch (e) {
+      console.error(`[Redmine Gantt] ${method} ${url} \u63A5\u7D9A\u30A8\u30E9\u30FC`, e);
       throw new RedmineApiError(
         0,
         `Redmine\u306B\u63A5\u7D9A\u3067\u304D\u307E\u305B\u3093: ${url}
 URL\u306E\u8AA4\u308A\u3001\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u672A\u5230\u9054\u3001\u307E\u305F\u306F\u81EA\u5DF1\u7F72\u540D\u8A3C\u660E\u66F8\u304C\u539F\u56E0\u306E\u53EF\u80FD\u6027\u304C\u3042\u308A\u307E\u3059\u3002(${String(e)})`
+      );
+    }
+    if (method === "PUT") {
+      console.log(
+        `[Redmine Gantt] ${method} ${url} \u30EC\u30B9\u30DD\u30F3\u30B9 HTTP ${response.status}`,
+        response.text && response.text.length > 0 ? response.text.slice(0, 2e3) : "(\u30DC\u30C7\u30A3\u306A\u3057)"
       );
     }
     if (response.status === 401) {
@@ -419,9 +437,16 @@ ${details || "\u5165\u529B\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060
     }
     return result;
   }
-  /** チケットを1件取得する(編集モーダルで最新状態を表示するために使う) */
+  /**
+   * チケットを1件取得する(編集モーダルで最新状態を表示するために使う)。
+   * 子チケットの有無で編集可否を判定するため children を含めて取得する
+   */
   async fetchIssue(issueId) {
-    const res = await this.request("GET", `/issues/${issueId}.json`);
+    const res = await this.request(
+      "GET",
+      `/issues/${issueId}.json`,
+      { include: "children" }
+    );
     return res.issue;
   }
   /** 全ステータスの一覧。ワークフロー上の遷移可否は含まれない(不可な遷移は更新時に422で返る) */
@@ -552,6 +577,27 @@ function buildGanttModel(issues, contextIds) {
 
 // src/issue/IssueEditModal.ts
 var import_obsidian3 = require("obsidian");
+var MemberSuggest = class extends import_obsidian3.AbstractInputSuggest {
+  constructor(app, textInputEl, members, onPick) {
+    super(app, textInputEl);
+    this.textInputEl = textInputEl;
+    this.members = members;
+    this.onPick = onPick;
+  }
+  getSuggestions(query) {
+    const q = query.trim().toLowerCase();
+    const hits = this.members.filter((member) => member.name.toLowerCase().includes(q));
+    return q === "" ? [null, ...hits] : hits;
+  }
+  renderSuggestion(member, el) {
+    el.setText(member ? member.name : "(\u672A\u5272\u5F53)");
+  }
+  selectSuggestion(member) {
+    this.textInputEl.value = member ? member.name : "";
+    this.onPick(member);
+    this.close();
+  }
+};
 var IssueEditModal = class extends import_obsidian3.Modal {
   constructor(app, client, issueId, onSaved) {
     super(app);
@@ -568,12 +614,14 @@ var IssueEditModal = class extends import_obsidian3.Modal {
     this.delivery = "";
     this.doneRatio = 0;
     this.deliveryFieldId = null;
+    this.errorEl = null;
+    /** 子チケットを持つ親チケットか。開始日・期日・進捗率は子から自動算出のため編集不可にする */
+    this.hasChildren = false;
     this.client = client;
     this.issueId = issueId;
     this.onSaved = onSaved;
   }
   async onOpen() {
-    var _a, _b, _c, _d, _e;
     const { contentEl } = this;
     contentEl.createEl("h3", { text: `#${this.issueId} \u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026` });
     try {
@@ -591,22 +639,32 @@ var IssueEditModal = class extends import_obsidian3.Modal {
       if (issue.assigned_to && !this.members.some((m) => m.id === issue.assigned_to.id)) {
         this.members.unshift(issue.assigned_to);
       }
-      this.statusId = issue.status.id;
-      this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
-      this.startDate = (_a = issue.start_date) != null ? _a : "";
-      this.dueDate = (_b = issue.due_date) != null ? _b : "";
-      this.doneRatio = (_c = issue.done_ratio) != null ? _c : 0;
-      const deliveryField = (_d = issue.custom_fields) == null ? void 0 : _d.find((f) => f.name === DELIVERY_FIELD_NAME);
-      if (deliveryField) {
-        this.deliveryFieldId = deliveryField.id;
-        this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_e = deliveryField.value) != null ? _e : "";
-      }
+      this.applyIssue(issue);
       this.renderForm();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       contentEl.empty();
       contentEl.createEl("h3", { text: `#${this.issueId} \u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557` });
       contentEl.createDiv({ cls: "rg-error", text: message });
+    }
+  }
+  /** チケットの現在値をフォームの入力値へ反映する */
+  applyIssue(issue) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    this.issue = issue;
+    this.hasChildren = ((_b = (_a = issue.children) == null ? void 0 : _a.length) != null ? _b : 0) > 0;
+    this.statusId = issue.status.id;
+    this.assigneeId = issue.assigned_to ? String(issue.assigned_to.id) : "";
+    this.startDate = (_c = issue.start_date) != null ? _c : "";
+    this.dueDate = (_d = issue.due_date) != null ? _d : "";
+    this.doneRatio = (_e = issue.done_ratio) != null ? _e : 0;
+    const deliveryField = (_f = issue.custom_fields) == null ? void 0 : _f.find((f) => f.name === DELIVERY_FIELD_NAME);
+    if (deliveryField) {
+      this.deliveryFieldId = deliveryField.id;
+      this.delivery = Array.isArray(deliveryField.value) ? deliveryField.value.join(", ") : (_g = deliveryField.value) != null ? _g : "";
+    } else {
+      this.deliveryFieldId = null;
+      this.delivery = "";
     }
   }
   renderForm() {
@@ -628,27 +686,47 @@ var IssueEditModal = class extends import_obsidian3.Modal {
         this.statusId = Number(value);
       });
     });
-    new import_obsidian3.Setting(contentEl).setName("\u62C5\u5F53\u8005").addDropdown((dropdown) => {
-      dropdown.addOption("", "(\u672A\u5272\u5F53)");
-      for (const member of this.members) {
-        dropdown.addOption(String(member.id), member.name);
-      }
-      dropdown.setValue(this.assigneeId).onChange((value) => {
-        this.assigneeId = value;
+    new import_obsidian3.Setting(contentEl).setName("\u62C5\u5F53\u8005").setDesc("\u540D\u524D\u306E\u4E00\u90E8\u3092\u5165\u529B\u3057\u3066\u691C\u7D22").addText((text) => {
+      const current = this.members.find((m) => String(m.id) === this.assigneeId);
+      text.setPlaceholder("(\u672A\u5272\u5F53)");
+      text.setValue(current ? current.name : "");
+      new MemberSuggest(this.app, text.inputEl, this.members, (member) => {
+        this.assigneeId = member ? String(member.id) : "";
+      });
+      text.inputEl.addEventListener("blur", () => {
+        const value = text.inputEl.value.trim();
+        if (value === "") {
+          this.assigneeId = "";
+          return;
+        }
+        const hit = this.members.find((m) => m.name === value);
+        if (hit) {
+          this.assigneeId = String(hit.id);
+          return;
+        }
+        const selected = this.members.find((m) => String(m.id) === this.assigneeId);
+        text.setValue(selected ? selected.name : "");
       });
     });
-    new import_obsidian3.Setting(contentEl).setName("\u958B\u59CB\u65E5").addText((text) => {
+    const derivedNote = "\u5B50\u30C1\u30B1\u30C3\u30C8\u304B\u3089\u81EA\u52D5\u7B97\u51FA\u3055\u308C\u308B\u305F\u3081\u7DE8\u96C6\u3067\u304D\u307E\u305B\u3093";
+    const startSetting = new import_obsidian3.Setting(contentEl).setName("\u958B\u59CB\u65E5").addText((text) => {
       text.inputEl.type = "date";
+      text.setDisabled(this.hasChildren);
       text.setValue(this.startDate).onChange((value) => {
         this.startDate = value;
       });
     });
-    new import_obsidian3.Setting(contentEl).setName("\u671F\u65E5").addText((text) => {
+    if (this.hasChildren)
+      startSetting.setDesc(derivedNote);
+    const dueSetting = new import_obsidian3.Setting(contentEl).setName("\u671F\u65E5").addText((text) => {
       text.inputEl.type = "date";
+      text.setDisabled(this.hasChildren);
       text.setValue(this.dueDate).onChange((value) => {
         this.dueDate = value;
       });
     });
+    if (this.hasChildren)
+      dueSetting.setDesc(derivedNote);
     if (this.deliveryFieldId !== null) {
       new import_obsidian3.Setting(contentEl).setName("\u7D0D\u671F").addText((text) => {
         text.inputEl.type = "date";
@@ -657,17 +735,62 @@ var IssueEditModal = class extends import_obsidian3.Modal {
         });
       });
     }
-    new import_obsidian3.Setting(contentEl).setName("\u9032\u6357\u7387").addDropdown((dropdown) => {
-      for (let ratio = 0; ratio <= 100; ratio += 10) {
+    const ratioSetting = new import_obsidian3.Setting(contentEl).setName("\u9032\u6357\u7387").addDropdown((dropdown) => {
+      const ratios = /* @__PURE__ */ new Set();
+      for (let ratio = 0; ratio <= 100; ratio += 10)
+        ratios.add(ratio);
+      ratios.add(this.doneRatio);
+      for (const ratio of Array.from(ratios).sort((a, b) => a - b)) {
         dropdown.addOption(String(ratio), `${ratio}%`);
       }
+      dropdown.setDisabled(this.hasChildren);
       dropdown.setValue(String(this.doneRatio)).onChange((value) => {
         this.doneRatio = Number(value);
       });
     });
+    if (this.hasChildren)
+      ratioSetting.setDesc(derivedNote);
+    this.errorEl = contentEl.createDiv({ cls: "rg-error rg-edit-error" });
+    this.errorEl.hide();
     new import_obsidian3.Setting(contentEl).addButton(
       (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => void this.save())
     ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+  }
+  showSaveError(message) {
+    if (this.errorEl) {
+      this.errorEl.setText(message);
+      this.errorEl.show();
+    }
+  }
+  /** 更新後のチケットと送信内容を突き合わせ、反映されなかった項目名を返す */
+  findUnappliedFields(updated, payload) {
+    var _a, _b, _c, _d, _e, _f;
+    const unapplied = [];
+    if (payload.status_id !== void 0 && updated.status.id !== payload.status_id) {
+      unapplied.push("\u30B9\u30C6\u30FC\u30BF\u30B9");
+    }
+    if (payload.assigned_to_id !== void 0) {
+      const actual = updated.assigned_to ? String(updated.assigned_to.id) : "";
+      const expected = payload.assigned_to_id === "" ? "" : String(payload.assigned_to_id);
+      if (actual !== expected)
+        unapplied.push("\u62C5\u5F53\u8005");
+    }
+    if (payload.start_date !== void 0 && ((_a = updated.start_date) != null ? _a : "") !== payload.start_date) {
+      unapplied.push("\u958B\u59CB\u65E5");
+    }
+    if (payload.due_date !== void 0 && ((_b = updated.due_date) != null ? _b : "") !== payload.due_date) {
+      unapplied.push("\u671F\u65E5");
+    }
+    if (payload.done_ratio !== void 0 && ((_c = updated.done_ratio) != null ? _c : 0) !== payload.done_ratio) {
+      unapplied.push("\u9032\u6357\u7387");
+    }
+    for (const field of (_d = payload.custom_fields) != null ? _d : []) {
+      const current = (_e = updated.custom_fields) == null ? void 0 : _e.find((f) => f.id === field.id);
+      const value = Array.isArray(current == null ? void 0 : current.value) ? current.value.join(", ") : (_f = current == null ? void 0 : current.value) != null ? _f : "";
+      if (value !== field.value)
+        unapplied.push("\u7D0D\u671F");
+    }
+    return unapplied;
   }
   /** 変更されたフィールドだけを集めた更新ペイロード。変更なしなら null */
   buildPayload() {
@@ -682,12 +805,14 @@ var IssueEditModal = class extends import_obsidian3.Modal {
     if (this.assigneeId !== currentAssignee) {
       payload.assigned_to_id = this.assigneeId === "" ? "" : Number(this.assigneeId);
     }
-    if (this.startDate !== ((_a = issue.start_date) != null ? _a : ""))
-      payload.start_date = this.startDate;
-    if (this.dueDate !== ((_b = issue.due_date) != null ? _b : ""))
-      payload.due_date = this.dueDate;
-    if (((_c = this.doneRatio) != null ? _c : 0) !== ((_d = issue.done_ratio) != null ? _d : 0))
-      payload.done_ratio = this.doneRatio;
+    if (!this.hasChildren) {
+      if (this.startDate !== ((_a = issue.start_date) != null ? _a : ""))
+        payload.start_date = this.startDate;
+      if (this.dueDate !== ((_b = issue.due_date) != null ? _b : ""))
+        payload.due_date = this.dueDate;
+      if (((_c = this.doneRatio) != null ? _c : 0) !== ((_d = issue.done_ratio) != null ? _d : 0))
+        payload.done_ratio = this.doneRatio;
+    }
     if (this.deliveryFieldId !== null) {
       const field = (_e = issue.custom_fields) == null ? void 0 : _e.find((f) => f.id === this.deliveryFieldId);
       const current = Array.isArray(field == null ? void 0 : field.value) ? field.value.join(", ") : (_f = field == null ? void 0 : field.value) != null ? _f : "";
@@ -706,15 +831,36 @@ var IssueEditModal = class extends import_obsidian3.Modal {
       return;
     }
     this.saving = true;
+    console.log(`[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u958B\u59CB`, JSON.stringify(payload));
     try {
       await this.client.updateIssue(this.issueId, payload);
       const updated = await this.client.fetchIssue(this.issueId);
-      new import_obsidian3.Notice(`#${this.issueId} \u3092\u66F4\u65B0\u3057\u307E\u3057\u305F`);
+      const unapplied = this.findUnappliedFields(updated, payload);
       this.onSaved(updated);
+      if (unapplied.length > 0) {
+        console.warn(
+          `[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u306F\u53D7\u7406\u3055\u308C\u305F\u304C\u672A\u53CD\u6620\u306E\u9805\u76EE\u3042\u308A: ` + unapplied.join("\u30FB"),
+          JSON.stringify({ payload, server: updated })
+        );
+        new import_obsidian3.Notice(`#${this.issueId}: ${unapplied.join("\u30FB")} \u304C\u53CD\u6620\u3055\u308C\u307E\u305B\u3093\u3067\u3057\u305F`, 8e3);
+        this.applyIssue(updated);
+        this.renderForm();
+        this.showSaveError(
+          `\u30B5\u30FC\u30D0\u306F\u66F4\u65B0\u3092\u53D7\u3051\u4ED8\u3051\u307E\u3057\u305F\u304C\u3001\u6B21\u306E\u9805\u76EE\u304C\u53CD\u6620\u3055\u308C\u3066\u3044\u307E\u305B\u3093: ${unapplied.join("\u30FB")}
+\u30EF\u30FC\u30AF\u30D5\u30ED\u30FC(\u30B9\u30C6\u30FC\u30BF\u30B9\u9077\u79FB)\u306E\u5236\u9650\u3084\u6A29\u9650\u304C\u539F\u56E0\u306E\u53EF\u80FD\u6027\u304C\u3042\u308A\u307E\u3059\u3002
+\u30D5\u30A9\u30FC\u30E0\u306F\u30B5\u30FC\u30D0\u306E\u73FE\u5728\u5024\u306B\u66F4\u65B0\u3057\u307E\u3057\u305F\u3002`
+        );
+        return;
+      }
+      console.log(`[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u6210\u529F(\u5168\u9805\u76EE\u306E\u53CD\u6620\u3092\u78BA\u8A8D)`);
+      new import_obsidian3.Notice(`#${this.issueId} \u3092\u66F4\u65B0\u3057\u307E\u3057\u305F`);
       this.close();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      console.error(`[Redmine Gantt] #${this.issueId} \u4FDD\u5B58\u5931\u6557`, e);
       new import_obsidian3.Notice(`Redmine Gantt: ${message}`, 8e3);
+      this.showSaveError(`\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F:
+${message}`);
     } finally {
       this.saving = false;
     }
@@ -726,6 +872,7 @@ var IssueEditModal = class extends import_obsidian3.Modal {
 
 // src/plan/PlanModal.ts
 var import_obsidian4 = require("obsidian");
+var PLAN_PRESET_COLORS = ["#d9534f", "#e8883a", "#3f9e4d", "#3f7fd9", "#7a5fd0"];
 var PlanModal = class extends import_obsidian4.Modal {
   constructor(app, items, onSave) {
     super(app);
@@ -733,17 +880,59 @@ var PlanModal = class extends import_obsidian4.Modal {
     this.onSave = onSave;
   }
   onOpen() {
+    this.modalEl.addClass("rg-plan-modal");
     this.render();
   }
   render() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: "\u5168\u4F53\u4E88\u5B9A\u306E\u7DE8\u96C6" });
+    contentEl.createEl("h3", { text: "\u4E88\u5B9A\u306E\u7DE8\u96C6" });
     contentEl.createEl("p", {
       cls: "rg-plan-desc",
-      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u306E\u6700\u4E0A\u6BB5\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
+      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u6700\u4E0A\u6BB5\u306E\u300C\u5168\u4F53\u4E88\u5B9A\u300D\u300C\u500B\u4EBA\u4E88\u5B9A\u300D\u306E\u884C\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
     });
-    this.items.forEach((item, index) => {
+    this.renderSection("\u5168\u4F53\u4E88\u5B9A", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5168\u4F53\u306E\u4E88\u5B9A(\u30EA\u30EA\u30FC\u30B9\u30FB\u30A4\u30D9\u30F3\u30C8\u306A\u3069)", "team");
+    this.renderSection("\u500B\u4EBA\u4E88\u5B9A", "\u4F11\u6687\u306A\u3069\u500B\u4EBA\u306E\u4E88\u5B9A", "personal");
+    new import_obsidian4.Setting(contentEl).addButton(
+      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
+        this.onSave(this.items.filter((item) => item.name !== ""));
+        this.close();
+      })
+    ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+  }
+  renderSection(title, desc, kind) {
+    var _a;
+    const { contentEl } = this;
+    const list = this.items.filter((item) => {
+      var _a2;
+      return ((_a2 = item.kind) != null ? _a2 : "team") === kind;
+    }).sort((a, b) => {
+      if (!a.start && !b.start)
+        return a.name.localeCompare(b.name, "ja");
+      if (!a.start)
+        return 1;
+      if (!b.start)
+        return -1;
+      return a.start.localeCompare(b.start);
+    });
+    new import_obsidian4.Setting(contentEl).setName(`${title}(${list.length}\u4EF6)`).setHeading().setDesc(desc).addButton(
+      (button) => button.setButtonText("\u8FFD\u52A0").onClick(() => {
+        this.items.push({
+          id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+          name: "",
+          start: "",
+          end: "",
+          color: "",
+          kind
+        });
+        this.render();
+      })
+    );
+    if (list.length === 0) {
+      contentEl.createDiv({ cls: "rg-plan-empty", text: "\u4E88\u5B9A\u306F\u3042\u308A\u307E\u305B\u3093\u3002" });
+      return;
+    }
+    for (const item of list) {
       const setting = new import_obsidian4.Setting(contentEl);
       setting.settingEl.addClass("rg-plan-setting");
       setting.addText((text) => {
@@ -761,38 +950,38 @@ var PlanModal = class extends import_obsidian4.Modal {
         text.setValue(item.end).onChange((value) => {
           item.end = value;
         });
-      }).addDropdown((dropdown) => {
-        for (const [value, label] of Object.entries(PLAN_STATUS_LABELS)) {
-          dropdown.addOption(value, label);
-        }
-        dropdown.setValue(item.status).onChange((value) => {
-          item.status = value;
+      });
+      const swatches = setting.controlEl.createDiv({ cls: "rg-plan-swatches" });
+      for (const color of PLAN_PRESET_COLORS) {
+        const swatch = swatches.createEl("button", { cls: "rg-plan-swatch" });
+        swatch.style.backgroundColor = color;
+        if (((_a = item.color) != null ? _a : "").toLowerCase() === color)
+          swatch.addClass("is-selected");
+        swatch.setAttr("aria-label", `\u8272: ${color}`);
+        swatch.addEventListener("click", (e) => {
+          e.preventDefault();
+          item.color = color;
+          this.render();
+        });
+      }
+      setting.addColorPicker((picker) => {
+        picker.setValue(item.color || "#808080").onChange((value) => {
+          item.color = value;
         });
       }).addExtraButton(
+        (button) => button.setIcon("rotate-ccw").setTooltip("\u8272\u3092\u65E2\u5B9A\u306B\u623B\u3059").onClick(() => {
+          item.color = "";
+          this.render();
+        })
+      ).addExtraButton(
         (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(() => {
-          this.items.splice(index, 1);
+          const index = this.items.indexOf(item);
+          if (index >= 0)
+            this.items.splice(index, 1);
           this.render();
         })
       );
-    });
-    new import_obsidian4.Setting(contentEl).addButton(
-      (button) => button.setButtonText("\u4E88\u5B9A\u3092\u8FFD\u52A0").onClick(() => {
-        this.items.push({
-          id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
-          name: "",
-          start: "",
-          end: "",
-          status: "todo"
-        });
-        this.render();
-      })
-    );
-    new import_obsidian4.Setting(contentEl).addButton(
-      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
-        this.onSave(this.items.filter((item) => item.name !== ""));
-        this.close();
-      })
-    ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
+    }
   }
   onClose() {
     this.contentEl.empty();
@@ -816,6 +1005,13 @@ function addDays(d, days) {
 }
 function diffDays(from, to) {
   return Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_PER_DAY);
+}
+function formatDate(d) {
+  if (!d)
+    return "-";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
 }
 function monthRange(year, month0, months) {
   const start = new Date(year, month0, 1);
@@ -860,6 +1056,138 @@ function weekendBands(range, scale) {
   return bands;
 }
 
+// src/gantt/holidays.ts
+var cache = /* @__PURE__ */ new Map();
+function key(month0, day) {
+  return month0 * 100 + day;
+}
+function nthMonday(year, month0, n) {
+  const first = new Date(year, month0, 1).getDay();
+  const offset = (8 - first) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
+function vernalEquinoxDay(year) {
+  return Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+}
+function autumnalEquinoxDay(year) {
+  return Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+}
+function holidaysOf(year) {
+  const cached = cache.get(year);
+  if (cached)
+    return cached;
+  const base = [
+    [0, 1],
+    // 元日
+    [0, nthMonday(year, 0, 2)],
+    // 成人の日
+    [1, 11],
+    // 建国記念の日
+    [1, 23],
+    // 天皇誕生日
+    [2, vernalEquinoxDay(year)],
+    // 春分の日
+    [3, 29],
+    // 昭和の日
+    [4, 3],
+    // 憲法記念日
+    [4, 4],
+    // みどりの日
+    [4, 5],
+    // こどもの日
+    [6, nthMonday(year, 6, 3)],
+    // 海の日
+    [7, 11],
+    // 山の日
+    [8, nthMonday(year, 8, 3)],
+    // 敬老の日
+    [8, autumnalEquinoxDay(year)],
+    // 秋分の日
+    [9, nthMonday(year, 9, 2)],
+    // スポーツの日
+    [10, 3],
+    // 文化の日
+    [10, 23]
+    // 勤労感謝の日
+  ];
+  const set = new Set(base.map(([m, d]) => key(m, d)));
+  for (const [m, d] of base) {
+    const date = new Date(year, m, d);
+    if (date.getDay() !== 0)
+      continue;
+    let next = addDays(date, 1);
+    while (set.has(key(next.getMonth(), next.getDate()))) {
+      next = addDays(next, 1);
+    }
+    if (next.getFullYear() === year)
+      set.add(key(next.getMonth(), next.getDate()));
+  }
+  for (const [m, d] of base) {
+    const candidate = new Date(year, m, d + 2);
+    if (candidate.getFullYear() !== year)
+      continue;
+    const candidateKey = key(candidate.getMonth(), candidate.getDate());
+    const betweenKey = key(new Date(year, m, d + 1).getMonth(), new Date(year, m, d + 1).getDate());
+    if (set.has(candidateKey) && !set.has(betweenKey)) {
+      const between = new Date(year, m, d + 1);
+      if (between.getDay() !== 0)
+        set.add(betweenKey);
+    }
+  }
+  cache.set(year, set);
+  return set;
+}
+function isJapaneseHoliday(d) {
+  return holidaysOf(d.getFullYear()).has(key(d.getMonth(), d.getDate()));
+}
+
+// src/gantt/situation.ts
+var DUE_SOON_DAYS = 14;
+function parseDeliveryDate(s) {
+  const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m)
+    return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+function situationInfo(task) {
+  if (task.isClosed || task.isContext)
+    return null;
+  const due = task.due && !task.dueIsFallback ? task.due : null;
+  const delivery = parseDeliveryDate(task.delivery);
+  const label = due ? "\u671F\u65E5" : delivery ? "\u7D0D\u671F" : null;
+  const target = due != null ? due : delivery;
+  if (!label || !target)
+    return null;
+  const now = /* @__PURE__ */ new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return { label, target, diff: diffDays(today, target) };
+}
+function matchesSituationFilter(task, filter) {
+  const info = situationInfo(task);
+  if (!info)
+    return false;
+  if (filter === "overdue")
+    return info.diff < 0;
+  if (filter === "week1")
+    return info.diff >= 0 && info.diff <= 7;
+  return info.diff >= 0 && info.diff <= 14;
+}
+function computeSituation(task) {
+  const info = situationInfo(task);
+  if (!info)
+    return null;
+  const { label, target, diff } = info;
+  if (diff < 0) {
+    return { text: `${label}\u8D85\u904E`, kind: "over", title: `${-diff}\u65E5\u8D85\u904E (${formatDate(target)})` };
+  }
+  if (diff > DUE_SOON_DAYS)
+    return null;
+  if (diff === 0) {
+    return { text: `${label}\u672C\u65E5`, kind: "soon" };
+  }
+  return { text: `${label}\u3042\u3068${diff}\u65E5`, kind: "soon" };
+}
+
 // src/gantt/renderer.ts
 var HEADER_HEIGHT = 40;
 var SHORT_LABEL_DAYS = 3;
@@ -874,6 +1202,8 @@ function svg(tag, attrs = {}) {
   }
   return el;
 }
+var DAY_DETAIL_PX_PER_DAY = 44;
+var DOW_LABELS = ["\u65E5", "\u6708", "\u706B", "\u6C34", "\u6728", "\u91D1", "\u571F"];
 function rowHeightFor(fontSize) {
   return Math.max(16, Math.round(fontSize * 2));
 }
@@ -886,39 +1216,64 @@ function clipSpan(start, end, range) {
   };
 }
 function renderGantt(container, model, plans, scale, range, opts) {
-  var _a, _b;
+  var _a;
   container.empty();
   if (model.tasks.length === 0 && plans.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
-  const ppd = PX_PER_DAY[scale];
+  const ppd = opts.dayDetail ? DAY_DETAIL_PX_PER_DAY : PX_PER_DAY[scale];
   const chartWidth = (range.days + 1) * ppd;
   const rowHeight = rowHeightFor(opts.fontSize);
   const barPadding = Math.max(3, Math.round(rowHeight * 0.22));
   const datedPlans = plans.filter((p) => p.start !== null && p.end !== null).sort((a, b) => a.start.getTime() - b.start.getTime());
-  const laneEnds = [];
-  const planLane = /* @__PURE__ */ new Map();
-  for (const plan of datedPlans) {
-    const durationDays = diffDays(plan.start, plan.end) + 1;
-    const labelDays = durationDays <= SHORT_LABEL_DAYS ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
-    const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
-    let lane = laneEnds.findIndex((end) => plan.start > end);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(effectiveEnd);
-    } else {
-      laneEnds[lane] = effectiveEnd;
+  const packLanes = (list) => {
+    const laneEnds = [];
+    const lane = /* @__PURE__ */ new Map();
+    for (const plan of list) {
+      const durationDays = diffDays(plan.start, plan.end) + 1;
+      const labelDays = durationDays <= SHORT_LABEL_DAYS ? Math.ceil((plan.name.length * opts.fontSize + rowHeight) / ppd) : 0;
+      const effectiveEnd = labelDays > 0 ? addDays(plan.end, labelDays) : plan.end;
+      let index = laneEnds.findIndex((end) => plan.start > end);
+      if (index === -1) {
+        index = laneEnds.length;
+        laneEnds.push(effectiveEnd);
+      } else {
+        laneEnds[index] = effectiveEnd;
+      }
+      lane.set(plan, index);
     }
-    planLane.set(plan, lane);
-  }
-  const planLaneCount = laneEnds.length;
+    return { lane, count: laneEnds.length };
+  };
+  const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
+  const personalPlans = datedPlans.filter((p) => p.kind === "personal");
+  const teamPack = packLanes(teamPlans);
+  const personalPack = packLanes(personalPlans);
+  const planLaneCount = teamPack.count + personalPack.count;
+  const teamTop = HEADER_HEIGHT;
+  const personalTop = teamTop + teamPack.count * rowHeight;
   const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
   const tasksHeight = model.tasks.length * rowHeight;
   const leftWidth = (_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH;
-  const ticks = computeTicks(range, scale);
+  let ticks = computeTicks(range, scale);
+  if (opts.dayDetail) {
+    ticks = { major: [], minor: [], gridX: [] };
+    for (let i = 0; i <= range.days; i++)
+      ticks.gridX.push(i * ppd);
+  }
   const today = /* @__PURE__ */ new Date();
   const todayX = today >= range.start && diffDays(range.start, today) <= range.days ? diffDays(range.start, today) * ppd + ppd / 2 : null;
+  const restDays = [];
+  if (opts.dayDetail) {
+    for (let i = 0; i <= range.days; i++) {
+      const d = addDays(range.start, i);
+      const dow = d.getDay();
+      const holiday = isJapaneseHoliday(d);
+      if (dow === 0 || dow === 6 || holiday) {
+        restDays.push({ x: i * ppd, holiday: holiday || dow === 0 });
+      }
+    }
+  }
   const leftEls = [];
   const attachResizer = (host) => {
     const resizer = host.createDiv({ cls: "rg-left-resizer" });
@@ -953,11 +1308,17 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const leftHeader = leftTop.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
-  if (planLaneCount > 0) {
+  if (teamPack.count > 0) {
     const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-    planLabel.style.height = `${planLaneCount * rowHeight}px`;
+    planLabel.style.height = `${teamPack.count * rowHeight}px`;
     planLabel.style.paddingLeft = "8px";
     planLabel.setText("\u5168\u4F53\u4E88\u5B9A");
+  }
+  if (personalPack.count > 0) {
+    const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
+    planLabel.style.height = `${personalPack.count * rowHeight}px`;
+    planLabel.style.paddingLeft = "8px";
+    planLabel.setText("\u500B\u4EBA\u4E88\u5B9A");
   }
   const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
   const topSvg = svg("svg", {
@@ -984,92 +1345,145 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   for (let i = 0; i <= planLaneCount; i++) {
     const y = HEADER_HEIGHT + i * rowHeight;
+    const isSeparator = i === planLaneCount || teamPack.count > 0 && personalPack.count > 0 && i === teamPack.count;
     topSvg.appendChild(
       svg("line", {
         x1: 0,
         y1: y,
         x2: chartWidth,
         y2: y,
-        class: i === planLaneCount ? "rg-separator" : "rg-grid"
+        class: isSeparator ? "rg-separator" : "rg-grid"
       })
     );
   }
-  for (const tick of ticks.major) {
-    const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
-    t.textContent = tick.label;
-    topSvg.appendChild(t);
-    topSvg.appendChild(
-      svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
-    );
-  }
-  for (const tick of ticks.minor) {
-    const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
-    t.textContent = tick.label;
-    topSvg.appendChild(t);
-  }
-  for (const plan of datedPlans) {
-    const lane = (_b = planLane.get(plan)) != null ? _b : 0;
-    const y = HEADER_HEIGHT + lane * rowHeight + barPadding;
-    const h = rowHeight - barPadding * 2;
-    const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
-    const group = svg("g", {});
-    const title = svg("title");
-    title.textContent = planTooltip(plan);
-    group.appendChild(title);
-    if (diffDays(plan.start, plan.end) === 0) {
-      if (plan.start < range.start || plan.start > range.end)
-        continue;
-      const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
-      const half = Math.max(5, Math.round(h / 2));
-      group.appendChild(
-        svg("polygon", {
-          points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
-          class: `rg-plan-marker rg-plan-${plan.status}`
-        })
-      );
-      const label = svg("text", {
-        x: cx + half + 4,
-        y: textBaseline,
-        "font-size": opts.fontSize,
-        class: `rg-plan-marker-label rg-plan-${plan.status}`
+  if (opts.dayDetail) {
+    for (let i = 0; i <= range.days; i++) {
+      const d = addDays(range.start, i);
+      const x = i * ppd;
+      if (d.getDate() === 1 || i === 0) {
+        const t = svg("text", { x: x + 4, y: 15, class: "rg-tick-major" });
+        t.textContent = `${d.getFullYear()}/${d.getMonth() + 1}`;
+        topSvg.appendChild(t);
+        topSvg.appendChild(
+          svg("line", { x1: x, y1: 0, x2: x, y2: HEADER_HEIGHT, class: "rg-grid" })
+        );
+      }
+      const dow = d.getDay();
+      const restClass = isJapaneseHoliday(d) || dow === 0 ? " rg-tick-sun" : dow === 6 ? " rg-tick-sat" : "";
+      const dayText = svg("text", {
+        x: x + ppd / 2,
+        y: 27,
+        "text-anchor": "middle",
+        class: "rg-tick-minor" + restClass
       });
-      label.textContent = plan.name;
-      group.appendChild(label);
-    } else {
-      const span = clipSpan(plan.start, plan.end, range);
-      if (!span)
-        continue;
-      const x = diffDays(range.start, span.s) * ppd;
-      const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
-      group.appendChild(
-        svg("rect", { x, y, width: w, height: h, rx: 3, class: `rg-plan-bar rg-plan-${plan.status}` })
+      dayText.textContent = String(d.getDate());
+      topSvg.appendChild(dayText);
+      const dowText = svg("text", {
+        x: x + ppd / 2,
+        y: 38,
+        "text-anchor": "middle",
+        class: "rg-tick-dow" + restClass
+      });
+      dowText.textContent = DOW_LABELS[dow];
+      topSvg.appendChild(dowText);
+    }
+  } else {
+    for (const tick of ticks.major) {
+      const t = svg("text", { x: tick.x + 4, y: 15, class: "rg-tick-major" });
+      t.textContent = tick.label;
+      topSvg.appendChild(t);
+      topSvg.appendChild(
+        svg("line", { x1: tick.x, y1: 0, x2: tick.x, y2: HEADER_HEIGHT, class: "rg-grid" })
       );
-      if (diffDays(plan.start, plan.end) + 1 <= SHORT_LABEL_DAYS) {
+    }
+    for (const tick of ticks.minor) {
+      const t = svg("text", { x: tick.x + 3, y: 33, class: "rg-tick-minor" });
+      t.textContent = tick.label;
+      topSvg.appendChild(t);
+    }
+  }
+  const drawPlans = (list, pack, top) => {
+    var _a2;
+    for (const plan of list) {
+      const lane = (_a2 = pack.lane.get(plan)) != null ? _a2 : 0;
+      const y = top + lane * rowHeight + barPadding;
+      const h = rowHeight - barPadding * 2;
+      const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
+      const kindClass = plan.kind === "personal" ? " rg-plan-personal" : "";
+      const group = svg("g", {});
+      const title = svg("title");
+      title.textContent = planTooltip(plan);
+      group.appendChild(title);
+      if (diffDays(plan.start, plan.end) === 0) {
+        if (plan.start < range.start || plan.start > range.end)
+          continue;
+        const cx = diffDays(range.start, plan.start) * ppd + ppd / 2;
+        const half = Math.max(5, Math.round(h / 2));
+        const marker = svg("polygon", {
+          points: `${cx - half},${y} ${cx + half},${y} ${cx},${y + h}`,
+          class: `rg-plan-marker${kindClass}`
+        });
+        if (plan.color)
+          marker.style.fill = plan.color;
+        group.appendChild(marker);
         const label = svg("text", {
-          x: x + w + 4,
+          x: cx + half + 4,
           y: textBaseline,
           "font-size": opts.fontSize,
-          class: `rg-plan-marker-label rg-plan-${plan.status}`
+          class: `rg-plan-marker-label${kindClass}`
         });
+        if (plan.color)
+          label.style.fill = plan.color;
         label.textContent = plan.name;
         group.appendChild(label);
       } else {
-        const maxChars = Math.floor((w - 10) / opts.fontSize);
-        if (maxChars >= 2) {
-          const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+        const span = clipSpan(plan.start, plan.end, range);
+        if (!span)
+          continue;
+        const x = diffDays(range.start, span.s) * ppd;
+        const w = Math.max((diffDays(span.s, span.e) + 1) * ppd, 4);
+        const bar = svg("rect", {
+          x,
+          y,
+          width: w,
+          height: h,
+          rx: 3,
+          class: `rg-plan-bar${kindClass}`
+        });
+        if (plan.color)
+          bar.style.fill = plan.color;
+        group.appendChild(bar);
+        if (diffDays(plan.start, plan.end) + 1 <= SHORT_LABEL_DAYS) {
           const label = svg("text", {
-            x: x + 6,
+            x: x + w + 4,
             y: textBaseline,
             "font-size": opts.fontSize,
-            class: "rg-plan-bar-label"
+            class: `rg-plan-marker-label${kindClass}`
           });
-          label.textContent = name;
+          if (plan.color)
+            label.style.fill = plan.color;
+          label.textContent = plan.name;
           group.appendChild(label);
+        } else {
+          const maxChars = Math.floor((w - 10) / opts.fontSize);
+          if (maxChars >= 2) {
+            const name = plan.name.length > maxChars ? plan.name.slice(0, maxChars - 1) + "\u2026" : plan.name;
+            const label = svg("text", {
+              x: x + 6,
+              y: textBaseline,
+              "font-size": opts.fontSize,
+              class: "rg-plan-bar-label"
+            });
+            label.textContent = name;
+            group.appendChild(label);
+          }
         }
       }
+      topSvg.appendChild(group);
     }
-    topSvg.appendChild(group);
-  }
+  };
+  drawPlans(teamPlans, teamPack, teamTop);
+  drawPlans(personalPlans, personalPack, personalTop);
   if (todayX !== null) {
     topSvg.appendChild(
       svg("line", { x1: todayX, y1: 0, x2: todayX, y2: topHeight, class: "rg-today" })
@@ -1101,13 +1515,25 @@ function renderGantt(container, model, plans, scale, range, opts) {
       row.addClass("rg-row-closed");
     if (task.isContext)
       row.addClass("rg-row-context");
+    const rowRight = row.createDiv({ cls: "rg-left-right" });
+    const assigneeCell = rowRight.createDiv({ cls: "rg-left-col-assignee" });
     if (task.assignee) {
-      const chip = row.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
+      const chip = assigneeCell.createSpan({ cls: "rg-assignee-chip", text: task.assignee });
       const color = task.isContext ? null : opts.assigneeColor(task.assignee);
       if (color) {
         chip.style.backgroundColor = color;
         chip.addClass("rg-assignee-chip-colored");
       }
+    }
+    const situationCell = rowRight.createDiv({ cls: "rg-left-col-situation" });
+    const situation = computeSituation(task);
+    if (situation) {
+      const badge = situationCell.createSpan({
+        cls: `rg-due rg-due-${situation.kind}`,
+        text: situation.text
+      });
+      if (situation.title)
+        badge.setAttr("title", situation.title);
     }
   }
   const chart = body.createDiv({ cls: "rg-chart" });
@@ -1117,10 +1543,24 @@ function renderGantt(container, model, plans, scale, range, opts) {
     viewBox: `0 0 ${chartWidth} ${tasksHeight}`
   });
   chart.appendChild(root);
-  for (const band of weekendBands(range, scale)) {
-    root.appendChild(
-      svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
-    );
+  if (opts.dayDetail) {
+    for (const rest of restDays) {
+      root.appendChild(
+        svg("rect", {
+          x: rest.x,
+          y: 0,
+          width: ppd,
+          height: tasksHeight,
+          class: "rg-weekend" + (rest.holiday ? " rg-holiday" : "")
+        })
+      );
+    }
+  } else {
+    for (const band of weekendBands(range, scale)) {
+      root.appendChild(
+        svg("rect", { x: band.x, y: 0, width: band.w, height: tasksHeight, class: "rg-weekend" })
+      );
+    }
   }
   for (const x of ticks.gridX) {
     root.appendChild(svg("line", { x1: x, y1: 0, x2: x, y2: tasksHeight, class: "rg-grid" }));
@@ -1163,7 +1603,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
       group.appendChild(progress);
     }
     if (diffDays(task.start, task.due) + 1 <= SHORT_LABEL_DAYS) {
-      const labelClass = "rg-bar-label" + (task.isClosed ? " rg-bar-label-muted" : "") + (task.isContext ? " rg-bar-label-muted" : "");
+      const labelClass = "rg-bar-label" + (task.isClosed || task.isContext ? " rg-bar-label-muted" : "");
       const label = svg("text", {
         x: x + w + 4,
         y: y + Math.round(h / 2 + opts.fontSize * 0.35),
@@ -1184,13 +1624,6 @@ function renderGantt(container, model, plans, scale, range, opts) {
     );
   }
 }
-function formatDate(d) {
-  if (!d)
-    return "-";
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-}
 function taskTooltip(task) {
   const lines = [
     `#${task.id} ${task.subject}`,
@@ -1208,7 +1641,7 @@ function planTooltip(plan) {
   return [
     plan.name,
     `\u671F\u9593: ${formatDate(plan.start)} \u301C ${formatDate(plan.end)}`,
-    `\u72B6\u614B: ${PLAN_STATUS_LABELS[plan.status]}`
+    plan.kind === "personal" ? "\u500B\u4EBA\u4E88\u5B9A" : "\u5168\u4F53\u4E88\u5B9A"
   ].join("\n");
 }
 
@@ -1233,21 +1666,68 @@ function defaultTableWidths() {
   return COLUMNS.map((c) => c.width);
 }
 function renderTable(container, model, opts) {
+  var _a, _b, _c;
   container.empty();
-  const all = model.tasks;
-  if (all.length === 0) {
+  let tasks = model.tasks;
+  const query = ((_a = opts.subjectFilter) != null ? _a : "").trim().toLowerCase();
+  if (query) {
+    tasks = tasks.filter((task) => task.subject.toLowerCase().includes(query));
+  }
+  const situation = (_b = opts.situationFilter) != null ? _b : "all";
+  if (situation !== "all") {
+    tasks = tasks.filter((task) => matchesSituationFilter(task, situation));
+  }
+  if (tasks.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
   const wrap = container.createDiv({ cls: "rg-table-wrap" });
+  const tableRegistry = [];
+  const groupBy = (_c = opts.groupBy) != null ? _c : "none";
+  if (groupBy === "none") {
+    buildTable(wrap, tasks, opts, tableRegistry);
+    return;
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (const task of tasks) {
+    const key2 = groupBy === "tracker" ? task.tracker : task.assignee;
+    const list = groups.get(key2);
+    if (list) {
+      list.push(task);
+    } else {
+      groups.set(key2, [task]);
+    }
+  }
+  const keys = Array.from(groups.keys()).sort((a, b) => {
+    if (a === "")
+      return 1;
+    if (b === "")
+      return -1;
+    return a.localeCompare(b, "ja");
+  });
+  for (const key2 of keys) {
+    const list = groups.get(key2);
+    const label = key2 !== "" ? key2 : groupBy === "assignee" ? "(\u62C5\u5F53\u8005\u306A\u3057)" : "(\u30C8\u30E9\u30C3\u30AB\u30FC\u306A\u3057)";
+    const title = wrap.createDiv({ cls: "rg-table-group-title" });
+    title.style.fontSize = `${opts.fontSize + 2}px`;
+    title.setText(`${label}(${list.length}\u4EF6)`);
+    buildTable(wrap, list, opts, tableRegistry);
+  }
+}
+function totalWidth(widths) {
+  return widths.reduce((sum, w) => sum + w, 0);
+}
+function buildTable(wrap, tasks, opts, tableRegistry) {
   const table = wrap.createEl("table", { cls: "rg-table" });
   table.style.fontSize = `${opts.fontSize}px`;
+  table.style.width = `${totalWidth(opts.widths)}px`;
   const colgroup = table.createEl("colgroup");
   const cols = COLUMNS.map((_, i) => {
     const col = colgroup.createEl("col");
     col.style.width = `${opts.widths[i]}px`;
     return col;
   });
+  tableRegistry.push({ table, cols });
   const thead = table.createEl("thead");
   const headRow = thead.createEl("tr");
   COLUMNS.forEach((column, i) => {
@@ -1259,7 +1739,11 @@ function renderTable(container, model, opts) {
       const startWidth = opts.widths[i];
       const onMove = (ev) => {
         opts.widths[i] = Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX);
-        cols[i].style.width = `${opts.widths[i]}px`;
+        const total = totalWidth(opts.widths);
+        for (const refs of tableRegistry) {
+          refs.cols[i].style.width = `${opts.widths[i]}px`;
+          refs.table.style.width = `${total}px`;
+        }
       };
       const onUp = () => {
         document.removeEventListener("mousemove", onMove);
@@ -1272,7 +1756,7 @@ function renderTable(container, model, opts) {
     });
   });
   const tbody = table.createEl("tbody");
-  for (const task of all) {
+  for (const task of tasks) {
     renderRow(tbody, task, opts);
   }
 }
@@ -1283,6 +1767,31 @@ function renderRow(tbody, task, opts) {
     row.addClass("rg-row-closed");
   if (task.isContext)
     row.addClass("rg-row-context");
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const menu = new import_obsidian5.Menu();
+    menu.addItem(
+      (item) => item.setTitle("\u30C1\u30B1\u30C3\u30C8\u5185\u5BB9\u3092\u30B3\u30D4\u30FC").setIcon("copy").onClick(async () => {
+        const due = task.due && !task.dueIsFallback ? formatDate(task.due) : "-";
+        const text = [
+          `#${task.id}`,
+          `${task.tracker} ${task.subject}`,
+          `\u62C5\u5F53\u8005: ${task.assignee || "-"}`,
+          `\u671F\u65E5: ${due}`,
+          `\u7D0D\u671F: ${task.delivery || "-"}`,
+          opts.issueUrl(task.id)
+        ].join("\n");
+        await navigator.clipboard.writeText(text);
+        new import_obsidian5.Notice(`#${task.id} \u3092\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F`);
+      })
+    );
+    if (opts.onOpenInPane) {
+      menu.addItem(
+        (item) => item.setTitle("Redmine\u3092\u53F3\u5074\u3067\u958B\u304F").setIcon("panel-right").onClick(() => opts.onOpenInPane(task.id))
+      );
+    }
+    menu.showAtMouseEvent(e);
+  });
   const idCell = row.createEl("td", { cls: "rg-td-id" });
   idCell.createEl("a", {
     cls: "rg-issue-link",
@@ -1346,39 +1855,13 @@ function renderRow(tbody, task, opts) {
   const editCell = row.createEl("td", { cls: "rg-td-edit" });
   if (opts.onEdit) {
     const btn = editCell.createEl("button", { cls: "rg-edit-btn" });
+    btn.style.height = "auto";
+    btn.style.minHeight = "0";
+    btn.style.lineHeight = "0";
     (0, import_obsidian5.setIcon)(btn, "pencil");
     btn.setAttr("aria-label", `#${task.id} \u3092\u7DE8\u96C6`);
     btn.addEventListener("click", () => opts.onEdit(task.id));
   }
-}
-function parseDeliveryDate(s) {
-  const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m)
-    return null;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-}
-var DUE_SOON_DAYS = 14;
-function computeSituation(task) {
-  if (task.isClosed || task.isContext)
-    return null;
-  const due = task.due && !task.dueIsFallback ? task.due : null;
-  const delivery = parseDeliveryDate(task.delivery);
-  const label = due ? "\u671F\u65E5" : delivery ? "\u7D0D\u671F" : null;
-  const target = due != null ? due : delivery;
-  if (!label || !target)
-    return null;
-  const now = /* @__PURE__ */ new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const diff = diffDays(today, target);
-  if (diff < 0) {
-    return { text: `${label}\u8D85\u904E`, kind: "over", title: `${-diff}\u65E5\u8D85\u904E (${formatDate(target)})` };
-  }
-  if (diff > DUE_SOON_DAYS)
-    return null;
-  if (diff === 0) {
-    return { text: `${label}\u672C\u65E5`, kind: "soon" };
-  }
-  return { text: `${label}\u3042\u3068${diff}\u65E5`, kind: "soon" };
 }
 
 // src/gantt/GanttView.ts
@@ -1419,6 +1902,11 @@ var GanttView = class extends import_obsidian6.ItemView {
     this.selectedAssignees = /* @__PURE__ */ new Set();
     this.tableWidths = defaultTableWidths();
     this.ganttLeftWidth = DEFAULT_LEFT_WIDTH;
+    // テーブル表示専用のフィルタ・分割状態(セッション内のみ保持)
+    this.tableControls = null;
+    this.tableSubjectFilter = "";
+    this.tableSituationFilter = "all";
+    this.tableGroupBy = "none";
     this.rangeMonths = 2;
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
@@ -1528,6 +2016,46 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.rangeMonths = Number(monthsSelect.value);
       this.renderView();
     });
+    this.tableControls = toolbar.createDiv({ cls: "rg-table-controls" });
+    const subjectInput = this.tableControls.createEl("input", {
+      cls: "rg-subject-input",
+      type: "search",
+      placeholder: "\u984C\u540D\u3067\u7D5E\u308A\u8FBC\u307F"
+    });
+    subjectInput.value = this.tableSubjectFilter;
+    subjectInput.addEventListener("input", () => {
+      this.tableSubjectFilter = subjectInput.value;
+      this.renderView();
+    });
+    const situationSelect = this.tableControls.createEl("select", { cls: "dropdown" });
+    for (const [value, label] of [
+      ["all", "\u72B6\u6CC1: \u3059\u3079\u3066"],
+      ["week1", "1\u9031\u9593\u4EE5\u5185"],
+      ["week2", "2\u9031\u9593\u4EE5\u5185"],
+      ["overdue", "\u671F\u65E5\u30FB\u7D0D\u671F\u8D85\u904E"]
+    ]) {
+      const option = situationSelect.createEl("option", { text: label });
+      option.value = value;
+    }
+    situationSelect.value = this.tableSituationFilter;
+    situationSelect.addEventListener("change", () => {
+      this.tableSituationFilter = situationSelect.value;
+      this.renderView();
+    });
+    const groupSelect = this.tableControls.createEl("select", { cls: "dropdown" });
+    for (const [value, label] of [
+      ["none", "\u5206\u3051\u306A\u3044"],
+      ["tracker", "\u30C8\u30E9\u30C3\u30AB\u30FC\u3067\u5206\u3051\u308B"],
+      ["assignee", "\u62C5\u5F53\u8005\u3067\u5206\u3051\u308B"]
+    ]) {
+      const option = groupSelect.createEl("option", { text: label });
+      option.value = value;
+    }
+    groupSelect.value = this.tableGroupBy;
+    groupSelect.addEventListener("change", () => {
+      this.tableGroupBy = groupSelect.value;
+      this.renderView();
+    });
     const closedLabel = toolbar.createEl("label", { cls: "rg-check" });
     const closedCheckbox = closedLabel.createEl("input", { type: "checkbox" });
     closedLabel.appendText("\u5B8C\u4E86");
@@ -1573,11 +2101,14 @@ var GanttView = class extends import_obsidian6.ItemView {
     return (_a = this.plugin.settings.filters.find((f) => f.name === name)) != null ? _a : null;
   }
   updateScaleVisibility() {
-    const display = this.plugin.settings.viewMode === "table" ? "none" : "";
+    const isTable = this.plugin.settings.viewMode === "table";
+    const ganttDisplay = isTable ? "none" : "";
     if (this.scaleSelect)
-      this.scaleSelect.style.display = display;
+      this.scaleSelect.style.display = ganttDisplay;
     if (this.rangeControls)
-      this.rangeControls.style.display = display;
+      this.rangeControls.style.display = ganttDisplay;
+    if (this.tableControls)
+      this.tableControls.style.display = isTable ? "" : "none";
   }
   monthInputValue() {
     return `${this.rangeYear}-${String(this.rangeMonth + 1).padStart(2, "0")}`;
@@ -1754,6 +2285,7 @@ var GanttView = class extends import_obsidian6.ItemView {
   /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
   planRows() {
     const rows = this.plugin.settings.planItems.map((item) => {
+      var _a, _b;
       let start = parsePlanDate(item.start);
       let end = parsePlanDate(item.end);
       if (start && end && start > end)
@@ -1762,7 +2294,13 @@ var GanttView = class extends import_obsidian6.ItemView {
         end = start;
       if (!start && end)
         start = end;
-      return { name: item.name, start, end, status: item.status };
+      return {
+        name: item.name,
+        start,
+        end,
+        color: (_a = item.color) != null ? _a : "",
+        kind: (_b = item.kind) != null ? _b : "team"
+      };
     });
     return rows.sort((a, b) => {
       if (!a.start)
@@ -1790,13 +2328,23 @@ var GanttView = class extends import_obsidian6.ItemView {
       leftWidth: this.ganttLeftWidth,
       onLeftWidthChange: (width) => {
         this.ganttLeftWidth = width;
-      }
+      },
+      // 1ヶ月表示のときはスケールに関わらず日単位の詳細表示にする
+      dayDetail: this.rangeMonths === 1
     };
+    if (this.scaleSelect) {
+      this.scaleSelect.disabled = this.rangeMonths === 1;
+      this.scaleSelect.title = this.rangeMonths === 1 ? "1\u30F6\u6708\u8868\u793A\u3067\u306F\u5E38\u306B\u65E5\u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059" : "";
+    }
     if (this.plugin.settings.viewMode === "table") {
       renderTable(this.chartEl, model, {
         ...opts,
         widths: this.tableWidths,
-        onEdit: (issueId) => this.openEditModal(issueId)
+        onEdit: (issueId) => this.openEditModal(issueId),
+        onOpenInPane: this.plugin.settings.openIssueInWebView && import_obsidian6.Platform.isDesktopApp ? (issueId) => void this.plugin.openRedmineWeb(client.issueUrl(issueId)) : void 0,
+        subjectFilter: this.tableSubjectFilter,
+        situationFilter: this.tableSituationFilter,
+        groupBy: this.tableGroupBy
       });
     } else {
       renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
@@ -1827,11 +2375,84 @@ var GanttView = class extends import_obsidian6.ItemView {
   }
 };
 
+// src/web/RedmineWebView.ts
+var import_obsidian7 = require("obsidian");
+var VIEW_TYPE_REDMINE_WEB = "redmine-web-view";
+var RedmineWebView = class extends import_obsidian7.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.currentUrl = "";
+    this.webviewEl = null;
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return VIEW_TYPE_REDMINE_WEB;
+  }
+  getDisplayText() {
+    return "Redmine";
+  }
+  getIcon() {
+    return "globe";
+  }
+  async onOpen() {
+    this.contentEl.empty();
+    this.contentEl.addClass("rg-web-view");
+    this.contentEl.style.padding = "0";
+    this.contentEl.style.position = "relative";
+    this.contentEl.style.overflow = "hidden";
+    if (!import_obsidian7.Platform.isDesktopApp) {
+      this.contentEl.createDiv({
+        cls: "rg-empty",
+        text: "Redmine\u30D3\u30E5\u30FC\u306FObsidian\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248\u306E\u307F\u5BFE\u5FDC\u3067\u3059\u3002"
+      });
+      return;
+    }
+    if (!this.currentUrl) {
+      this.currentUrl = this.plugin.settings.baseUrl;
+    }
+    const webview = document.createElement("webview");
+    webview.setAttribute("partition", "persist:redmine-gantt");
+    webview.setAttribute("allowpopups", "true");
+    if (this.currentUrl)
+      webview.setAttribute("src", this.currentUrl);
+    webview.addClass("rg-webview");
+    webview.style.position = "absolute";
+    webview.style.inset = "0";
+    webview.style.width = "100%";
+    webview.style.height = "100%";
+    this.contentEl.appendChild(webview);
+    this.webviewEl = webview;
+  }
+  /** 表示URLを切り替える(ビュー未生成ならonOpen時に読み込む) */
+  navigate(url) {
+    this.currentUrl = url;
+    if (this.webviewEl) {
+      this.webviewEl.setAttribute("src", url);
+    }
+  }
+  /** ワークスペース保存・復元用にURLを保持する */
+  getState() {
+    return { url: this.currentUrl };
+  }
+  async setState(state, result) {
+    const url = state == null ? void 0 : state.url;
+    if (typeof url === "string" && url) {
+      this.navigate(url);
+    }
+    await super.setState(state, result);
+  }
+  async onClose() {
+    this.webviewEl = null;
+    this.contentEl.empty();
+  }
+};
+
 // src/main.ts
-var RedmineGanttPlugin = class extends import_obsidian7.Plugin {
+var RedmineGanttPlugin = class extends import_obsidian8.Plugin {
   async onload() {
     await this.loadSettings();
     this.registerView(VIEW_TYPE_REDMINE_GANTT, (leaf) => new GanttView(leaf, this));
+    this.registerView(VIEW_TYPE_REDMINE_WEB, (leaf) => new RedmineWebView(leaf, this));
     this.addRibbonIcon("gantt-chart", "Redmine Gantt \u3092\u958B\u304F", () => {
       void this.activateView();
     });
@@ -1851,6 +2472,23 @@ var RedmineGanttPlugin = class extends import_obsidian7.Plugin {
     } else {
       leaf = workspace.getLeaf(true);
       await leaf.setViewState({ type: VIEW_TYPE_REDMINE_GANTT, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+  }
+  /** Redmineの画面を右分割ペインのRedmineビューで開く(既に開いていればURLを差し替え) */
+  async openRedmineWeb(url) {
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(VIEW_TYPE_REDMINE_WEB);
+    let leaf;
+    if (existing.length > 0) {
+      leaf = existing[0];
+    } else {
+      leaf = workspace.getLeaf("split", "vertical");
+      await leaf.setViewState({ type: VIEW_TYPE_REDMINE_WEB, active: false });
+    }
+    const view = leaf.view;
+    if (view instanceof RedmineWebView) {
+      view.navigate(url);
     }
     await workspace.revealLeaf(leaf);
   }

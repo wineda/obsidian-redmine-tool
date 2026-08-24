@@ -62,6 +62,14 @@ export class RedmineClient {
 			headers["Content-Type"] = "application/json";
 		}
 
+		// 更新系はトラブル調査のためリクエスト/レスポンスをコンソールへ記録する
+		if (method === "PUT") {
+			console.log(
+				`[Redmine Gantt] ${method} ${url} リクエスト`,
+				body !== undefined ? JSON.stringify(body) : "(ボディなし)"
+			);
+		}
+
 		let response;
 		try {
 			response = await requestUrl({
@@ -72,10 +80,18 @@ export class RedmineClient {
 				throw: false,
 			});
 		} catch (e) {
+			console.error(`[Redmine Gantt] ${method} ${url} 接続エラー`, e);
 			throw new RedmineApiError(
 				0,
 				`Redmineに接続できません: ${url}\n` +
 					`URLの誤り、ネットワーク未到達、または自己署名証明書が原因の可能性があります。(${String(e)})`
+			);
+		}
+
+		if (method === "PUT") {
+			console.log(
+				`[Redmine Gantt] ${method} ${url} レスポンス HTTP ${response.status}`,
+				response.text && response.text.length > 0 ? response.text.slice(0, 2000) : "(ボディなし)"
 			);
 		}
 
@@ -296,9 +312,16 @@ export class RedmineClient {
 		return result;
 	}
 
-	/** チケットを1件取得する(編集モーダルで最新状態を表示するために使う) */
+	/**
+	 * チケットを1件取得する(編集モーダルで最新状態を表示するために使う)。
+	 * 子チケットの有無で編集可否を判定するため children を含めて取得する
+	 */
 	async fetchIssue(issueId: number): Promise<RedmineIssue> {
-		const res = await this.request<{ issue: RedmineIssue }>("GET", `/issues/${issueId}.json`);
+		const res = await this.request<{ issue: RedmineIssue }>(
+			"GET",
+			`/issues/${issueId}.json`,
+			{ include: "children" }
+		);
 		return res.issue;
 	}
 

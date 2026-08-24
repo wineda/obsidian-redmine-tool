@@ -5,6 +5,7 @@ import {
 	RedmineGanttSettingTab,
 } from "./settings";
 import { GanttView, VIEW_TYPE_REDMINE_GANTT } from "./gantt/GanttView";
+import { RedmineWebView, VIEW_TYPE_REDMINE_WEB } from "./web/RedmineWebView";
 
 export default class RedmineGanttPlugin extends Plugin {
 	settings: RedmineGanttSettings;
@@ -13,6 +14,7 @@ export default class RedmineGanttPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.registerView(VIEW_TYPE_REDMINE_GANTT, (leaf) => new GanttView(leaf, this));
+		this.registerView(VIEW_TYPE_REDMINE_WEB, (leaf) => new RedmineWebView(leaf, this));
 
 		this.addRibbonIcon("gantt-chart", "Redmine Gantt を開く", () => {
 			void this.activateView();
@@ -36,6 +38,24 @@ export default class RedmineGanttPlugin extends Plugin {
 		} else {
 			leaf = workspace.getLeaf(true);
 			await leaf.setViewState({ type: VIEW_TYPE_REDMINE_GANTT, active: true });
+		}
+		await workspace.revealLeaf(leaf);
+	}
+
+	/** Redmineの画面を右分割ペインのRedmineビューで開く(既に開いていればURLを差し替え) */
+	async openRedmineWeb(url: string): Promise<void> {
+		const { workspace } = this.app;
+		const existing = workspace.getLeavesOfType(VIEW_TYPE_REDMINE_WEB);
+		let leaf: WorkspaceLeaf;
+		if (existing.length > 0) {
+			leaf = existing[0];
+		} else {
+			leaf = workspace.getLeaf("split", "vertical");
+			await leaf.setViewState({ type: VIEW_TYPE_REDMINE_WEB, active: false });
+		}
+		const view = leaf.view;
+		if (view instanceof RedmineWebView) {
+			view.navigate(url);
 		}
 		await workspace.revealLeaf(leaf);
 	}

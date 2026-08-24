@@ -31,15 +31,12 @@ export interface AssigneeColor {
 
 export type PlanStatus = "todo" | "doing" | "done";
 
-export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
-	todo: "未着手",
-	doing: "進行中",
-	done: "完了",
-};
+/** 予定の種別。全体=プロジェクト全体の予定、個人=休暇など個人の予定 */
+export type PlanKind = "team" | "personal";
 
 /**
- * 全体予定の項目。Redmineとは独立してプラグイン内(data.json)に保存し、
- * ガントチャートの最上段に表示する。
+ * 予定の項目。Redmineとは独立してプラグイン内(data.json)に保存し、
+ * ガントチャートの最上段(全体予定/個人予定の行)に表示する。
  */
 export interface PlanItem {
 	id: string;
@@ -48,7 +45,12 @@ export interface PlanItem {
 	start: string;
 	/** "YYYY-MM-DD"。未定は空文字 */
 	end: string;
-	status: PlanStatus;
+	/** @deprecated 旧バージョンのステータス。表示には使わない(読み捨て互換用) */
+	status?: PlanStatus;
+	/** バーの色 "#rrggbb"。空文字・未設定は種別ごとの既定色 */
+	color?: string;
+	/** 種別。未設定は全体予定として扱う(旧データ互換) */
+	kind?: PlanKind;
 }
 
 export interface RedmineGanttSettings {
@@ -63,6 +65,8 @@ export interface RedmineGanttSettings {
 	assigneeColors: AssigneeColor[];
 	/** テーブルの文字サイズ(px)。行の高さも連動する */
 	tableFontSize: number;
+	/** 右クリックメニューからObsidian内のRedmineビューで開けるようにする */
+	openIssueInWebView: boolean;
 }
 
 export const DEFAULT_SETTINGS: RedmineGanttSettings = {
@@ -75,6 +79,7 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	planItems: [],
 	assigneeColors: [],
 	tableFontSize: 11,
+	openIssueInWebView: true,
 };
 
 export class RedmineGanttSettingTab extends PluginSettingTab {
@@ -157,6 +162,23 @@ export class RedmineGanttSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						this.plugin.refreshGanttViews();
 						this.display();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Redmineビューで開く")
+			.setDesc(
+				"テーブルの右クリックメニューに「Redmineを右側で開く」を追加し、" +
+					"Obsidian内の分割ペインでRedmine本体を表示します(デスクトップ版のみ)。" +
+					"オフにするとメニュー項目は表示されません。"
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.openIssueInWebView)
+					.onChange(async (value) => {
+						this.plugin.settings.openIssueInWebView = value;
+						await this.plugin.saveSettings();
+						this.plugin.refreshGanttViews();
 					})
 			);
 

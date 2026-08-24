@@ -32,6 +32,13 @@ export function diffDays(from: Date, to: Date): number {
 	return Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_PER_DAY);
 }
 
+export function formatDate(d: Date | null): string {
+	if (!d) return "-";
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+		d.getDate()
+	).padStart(2, "0")}`;
+}
+
 /** 指定した開始月から months ヶ月分の表示範囲を作る */
 export function monthRange(year: number, month0: number, months: number): TimeRange {
 	const start = new Date(year, month0, 1);
