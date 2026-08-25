@@ -131,11 +131,15 @@ export function renderGantt(
 		return { lane, count: laneEnds.length };
 	};
 
-	// 全体予定と個人予定は別の帯としてレーンを分けて積む
+	// 全体予定と個人予定は別の帯として積む
 	const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
 	const personalPlans = datedPlans.filter((p) => p.kind === "personal");
 	const teamPack = packLanes(teamPlans);
-	const personalPack = packLanes(personalPlans);
+	// 個人予定は重なっても常に1行に収める(レーン分割しない)
+	const personalPack = {
+		lane: new Map<PlanRow, number>(),
+		count: personalPlans.length > 0 ? 1 : 0,
+	};
 	const planLaneCount = teamPack.count + personalPack.count;
 	const teamTop = HEADER_HEIGHT;
 	const personalTop = teamTop + teamPack.count * rowHeight;

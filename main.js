@@ -1247,7 +1247,10 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
   const personalPlans = datedPlans.filter((p) => p.kind === "personal");
   const teamPack = packLanes(teamPlans);
-  const personalPack = packLanes(personalPlans);
+  const personalPack = {
+    lane: /* @__PURE__ */ new Map(),
+    count: personalPlans.length > 0 ? 1 : 0
+  };
   const planLaneCount = teamPack.count + personalPack.count;
   const teamTop = HEADER_HEIGHT;
   const personalTop = teamTop + teamPack.count * rowHeight;
