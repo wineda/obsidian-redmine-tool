@@ -141,7 +141,7 @@ export function renderGantt(
 	const personalPlans = datedPlans.filter((p) => p.kind === "personal");
 	const teamPack = packLanes(teamPlans);
 
-	// 個人予定は担当者ごとにレーンをまとめる(同一担当者の予定が重なる場合のみ行を増やす)
+	// 個人予定は担当者ごとに常に1行(予定が重なってもレーン分割しない)
 	const personalLaneLabels: string[] = [];
 	const personalLaneOf = new Map<PlanRow, number>();
 	{
@@ -158,13 +158,10 @@ export function renderGantt(
 			return a.localeCompare(b, "ja");
 		});
 		for (const owner of owners) {
-			const pack = packLanes(byOwner.get(owner) ?? []);
 			const base = personalLaneLabels.length;
-			for (let i = 0; i < pack.count; i++) {
-				personalLaneLabels.push(i === 0 ? owner || "個人予定" : "");
-			}
-			for (const [plan, lane] of pack.lane) {
-				personalLaneOf.set(plan, base + lane);
+			personalLaneLabels.push(owner || "個人予定");
+			for (const plan of byOwner.get(owner) ?? []) {
+				personalLaneOf.set(plan, base);
 			}
 		}
 	}

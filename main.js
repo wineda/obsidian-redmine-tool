@@ -1277,13 +1277,10 @@ function renderGantt(container, model, plans, scale, range, opts) {
       return a.localeCompare(b, "ja");
     });
     for (const owner of owners) {
-      const pack = packLanes((_c = byOwner.get(owner)) != null ? _c : []);
       const base = personalLaneLabels.length;
-      for (let i = 0; i < pack.count; i++) {
-        personalLaneLabels.push(i === 0 ? owner || "\u500B\u4EBA\u4E88\u5B9A" : "");
-      }
-      for (const [plan, lane] of pack.lane) {
-        personalLaneOf.set(plan, base + lane);
+      personalLaneLabels.push(owner || "\u500B\u4EBA\u4E88\u5B9A");
+      for (const plan of (_c = byOwner.get(owner)) != null ? _c : []) {
+        personalLaneOf.set(plan, base);
       }
     }
   }
