@@ -6,6 +6,8 @@
 	height: 100%;
 	overflow: hidden;
 	padding: 0;
+	/* 予定のポップオーバー(絶対配置)の基準 */
+	position: relative;
 }
 
 /* ---- ツールバー ---- */
@@ -34,13 +36,13 @@
 	font-size: var(--font-ui-small);
 }
 
-/* ---- 全体予定の凡例(カラーキー) ---- */
+/* ---- 予定の凡例(グループごとのカラーキー) ---- */
 .rg-plan-legend {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: 4px 12px;
-	padding: 4px 10px;
+	gap: 2px 6px;
+	padding: 3px 10px;
 	border-bottom: 1px solid var(--background-modifier-border);
 	font-size: var(--font-ui-smaller);
 	flex: 0 0 auto;
@@ -49,18 +51,49 @@
 .rg-legend-title {
 	color: var(--text-muted);
 	font-weight: 600;
+	margin-right: 2px;
+}
+
+.rg-legend-sep {
+	width: 1px;
+	height: 14px;
+	background: var(--background-modifier-border);
+	margin: 0 6px;
+}
+
+/* 凡例のグループはボタン(クリックで表示切替)。Obsidianのbutton既定を打ち消して軽い見た目にする */
+.rg-plan-legend button {
+	height: auto;
+	min-height: 0;
+	padding: 1px 7px;
+	font-size: inherit;
+	line-height: 1.5;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	box-shadow: none;
+	color: var(--text-normal);
+	cursor: pointer;
 }
 
 .rg-legend-item {
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	cursor: pointer;
+}
+
+.rg-plan-legend button:hover {
+	background: var(--background-modifier-hover);
 	color: var(--text-normal);
 }
 
-.rg-legend-item:hover {
-	color: var(--text-accent);
+.rg-legend-item.is-hidden {
+	color: var(--text-faint);
+	text-decoration: line-through;
+}
+
+.rg-legend-item.is-hidden .rg-legend-dot {
+	opacity: 0.35;
 }
 
 .rg-legend-dot {
@@ -69,6 +102,19 @@
 	border-radius: 3px;
 	background: var(--text-faint);
 	flex: 0 0 auto;
+}
+
+.rg-plan-legend .rg-legend-add {
+	color: var(--text-muted);
+	border-color: var(--background-modifier-border);
+	border-style: dashed;
+	padding: 0 6px;
+}
+
+.rg-plan-legend .rg-legend-edit {
+	margin-left: auto;
+	color: var(--text-muted);
+	border-color: var(--background-modifier-border);
 }
 
 /* ---- チャート全体 ---- */
@@ -388,12 +434,84 @@
 	color: var(--text-muted);
 }
 
-/* 個人予定の担当者レーン行(左ペイン) */
-.rg-plan-owner-row {
-	font-weight: 500;
+/* 予定帯のグループ行(左ペイン): 色の丸+グループ名 */
+.rg-plan-group-row {
+	font-weight: 600;
+	padding-left: 8px;
+	gap: 7px;
 	white-space: nowrap;
+}
+
+.rg-plan-group-row.is-clickable {
+	cursor: pointer;
+}
+
+.rg-plan-group-row.is-clickable:hover {
+	background: var(--background-modifier-hover);
+}
+
+.rg-plan-group-personal {
+	font-weight: 500;
+}
+
+.rg-plan-group-dot {
+	flex: 0 0 auto;
+	width: 0.8em;
+	height: 0.8em;
+	border-radius: 50%;
+	background: var(--text-faint);
+}
+
+.rg-plan-group-name {
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+/* 予定帯の操作レーン(透明)。編集可能なときはホバーで薄く色付け、ドラッグで予定を作る */
+.rg-plan-lane {
+	fill: transparent;
+}
+
+.rg-plan-lane.is-editable {
+	cursor: crosshair;
+}
+
+.rg-plan-lane.is-editable:hover {
+	fill: var(--interactive-accent);
+	opacity: 0.1;
+}
+
+.rg-plan-hint {
+	fill: var(--text-faint);
+	pointer-events: none;
+}
+
+.rg-plan-item.is-editable {
+	cursor: pointer;
+}
+
+.rg-plan-item.is-editable:hover .rg-plan-bar,
+.rg-plan-item.is-editable:hover .rg-plan-marker {
+	stroke: var(--text-normal);
+	stroke-width: 1.5;
+}
+
+/* ドラッグ中の作成範囲 */
+.rg-plan-ghost {
+	fill: var(--interactive-accent);
+	opacity: 0.4;
+	pointer-events: none;
+}
+
+.rg-plan-ghost-label {
+	fill: var(--text-accent);
+	font-weight: 600;
+	pointer-events: none;
+}
+
+body.rg-plan-dragging {
+	cursor: crosshair;
+	user-select: none;
 }
 
 .rg-plan-marker {
@@ -475,27 +593,144 @@
 	padding: 4px 0 8px;
 }
 
-.rg-plan-setting .setting-item-info {
+.rg-plan-group-list {
+	margin-bottom: 8px;
+}
+
+/* グループ1つ分: 見出し(色・名前・件数・＋予定・⋯)+予定行 */
+.rg-plan-group {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	margin: 0 0 8px;
+	overflow: hidden;
+}
+
+.rg-plan-group-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+	background: var(--background-secondary);
+}
+
+.rg-plan-group-head .clickable-icon {
+	padding: 2px;
+}
+
+.rg-plan-group-head .rg-plan-chevron svg {
+	width: 16px;
+	height: 16px;
+}
+
+.rg-plan-group-name {
+	width: 200px;
+	font-weight: 600;
+	background: transparent;
+	border-color: transparent;
+}
+
+.rg-plan-group-name:hover,
+.rg-plan-group-name:focus {
+	background: var(--background-primary);
+	border-color: var(--background-modifier-border);
+}
+
+.rg-plan-group-count {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+.rg-plan-group-spacer {
+	flex: 1 1 auto;
+}
+
+.rg-plan-group-body {
+	padding: 2px 8px 6px 40px;
+}
+
+.rg-plan-group-body.is-collapsed {
 	display: none;
 }
 
-.rg-plan-setting .setting-item-control {
-	justify-content: flex-start;
-	flex-wrap: wrap;
+.rg-plan-group-body .rg-plan-empty {
+	padding: 6px 0 2px;
+}
+
+/* 予定1件: 名前・開始〜終了・色(上書き)・削除 */
+.rg-plan-item-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 0;
+	border-top: 1px dashed var(--background-modifier-border);
+}
+
+.rg-plan-item-row:first-child {
+	border-top: none;
 }
 
 .rg-plan-name-input {
-	min-width: 160px;
+	flex: 1 1 auto;
+	min-width: 140px;
 }
 
-.rg-plan-owner-input {
-	min-width: 100px;
+.rg-plan-tilde {
+	color: var(--text-faint);
 }
 
-/* よく使う色のスウォッチ(Obsidianのbutton既定高さを打ち消して丸に整える) */
+.rg-plan-dot {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	background: var(--text-faint);
+}
+
+.rg-plan-dot-lg {
+	width: 15px;
+	height: 15px;
+}
+
+.rg-plan-item-color.is-override .rg-plan-dot {
+	border-color: var(--text-normal);
+}
+
+.rg-plan-item-color,
+.rg-plan-group-color,
+.rg-plan-delete,
+.rg-plan-more {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* メニュー項目の色の丸 */
+.rg-menu-dot {
+	display: inline-block;
+	width: 11px;
+	height: 11px;
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: -1px;
+}
+
+/* OSのカラーピッカーを開くための一時的なinput(画面には出さない) */
+.rg-plan-color-input {
+	position: fixed;
+	left: -100px;
+	top: -100px;
+	width: 1px;
+	height: 1px;
+	opacity: 0;
+}
+
+/* 色のスウォッチ(Obsidianのbutton既定高さを打ち消して丸に整える) */
 .rg-plan-swatches {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 5px;
 }
 
@@ -516,6 +751,129 @@
 
 .rg-plan-swatch.is-selected {
 	border-color: var(--text-normal);
+}
+
+.rg-plan-swatch-group,
+.rg-plan-swatch-custom {
+	width: auto;
+	height: 20px;
+	padding: 0 8px;
+	border-radius: 999px;
+	font-size: var(--font-ui-smaller);
+	background: var(--background-secondary);
+	border: 2px solid var(--background-modifier-border);
+	color: var(--text-normal);
+}
+
+.rg-plan-swatch-custom {
+	width: 20px;
+	padding: 0;
+	border-radius: 50%;
+	font-weight: 700;
+}
+
+/* ---- ガント上の予定ポップオーバー(追加・編集・グループ設定) ---- */
+.rg-plan-popover {
+	position: absolute;
+	z-index: 30;
+	width: 320px;
+	max-width: calc(100% - 16px);
+	padding: 10px 12px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+	font-size: var(--font-ui-small);
+}
+
+.rg-pop-head {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	margin-bottom: 8px;
+	font-weight: 600;
+}
+
+.rg-pop-dot {
+	flex: 0 0 auto;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: var(--text-faint);
+}
+
+.rg-pop-kind {
+	margin-left: auto;
+	font-weight: 400;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.rg-pop-field {
+	display: grid;
+	grid-template-columns: 52px 1fr;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 6px;
+}
+
+.rg-pop-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.rg-pop-control input[type="text"],
+.rg-pop-control select {
+	width: 100%;
+}
+
+.rg-pop-control input.is-invalid {
+	border-color: var(--text-error);
+}
+
+.rg-pop-dates {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.rg-pop-dates input[type="date"] {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.rg-pop-tilde {
+	color: var(--text-faint);
+}
+
+.rg-pop-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 10px;
+}
+
+.rg-pop-spacer {
+	flex: 1 1 auto;
+}
+
+.rg-pop-danger {
+	color: var(--text-error);
+}
+
+.rg-pop-hint {
+	margin-top: 6px;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+}
+
+/* 「元に戻す」付きの通知 */
+.rg-undo-btn {
+	margin-left: 10px;
+	height: auto;
+	min-height: 0;
+	padding: 1px 8px;
+	font-size: var(--font-ui-smaller);
 }
 
 /* ---- 表示期間コントロール ---- */

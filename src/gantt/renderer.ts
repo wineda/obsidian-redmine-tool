@@ -1,5 +1,6 @@
 import type { GanttModel, GanttTask } from "../redmine/mapper";
 import { GanttScale, PlanKind } from "../settings";
+import { groupNoun } from "../plan/plans";
 import {
 	PX_PER_DAY,
 	TimeRange,
@@ -37,15 +38,49 @@ function svg<K extends keyof SVGElementTagNameMap>(
 
 /** 予定の表示用行(日付パース済み) */
 export interface PlanRow {
+	id: string;
 	name: string;
 	start: Date | null;
 	end: Date | null;
-	/** バーの色 "#rrggbb"。空文字は種別ごとの既定色 */
+	/** 表示色 "#rrggbb"(予定の上書き色、なければグループ色) */
 	color: string;
 	/** 全体予定 / 個人予定 */
 	kind: PlanKind;
-	/** 個人予定の担当者名(同じ担当者は同じ行にまとめる) */
-	owner?: string;
+	/** 所属グループ。同じグループの予定はガントの同じ行にまとめる */
+	groupId: string;
+}
+
+/** 予定帯の1行(グループ)。表示するものだけを渡す */
+export interface PlanGroupRow {
+	id: string;
+	name: string;
+	color: string;
+	kind: PlanKind;
+}
+
+/** 帯の空白をドラッグ(またはクリック)したときの予定作成リクエスト */
+export interface PlanCreateRequest {
+	groupId: string;
+	start: Date;
+	end: Date;
+	/** ドラッグ範囲の画面座標。ポップオーバーの表示位置に使う */
+	anchor: DOMRect;
+	/** 作成をやめたときに呼ぶ(ドラッグ範囲の仮表示を消す) */
+	cancel: () => void;
+}
+
+export type PlanMenuTarget =
+	| { type: "plan"; planId: string }
+	| { type: "lane"; groupId: string; date: Date };
+
+/** 予定帯に対する操作。未指定なら予定帯は表示のみ */
+export interface PlanInteractions {
+	onCreate: (req: PlanCreateRequest) => void;
+	/** バー・マーカーのクリック */
+	onOpen: (planId: string, anchor: DOMRect) => void;
+	/** 左ペインのグループ名のクリック */
+	onGroupOpen: (groupId: string, anchor: DOMRect) => void;
+	onContextMenu: (e: MouseEvent, target: PlanMenuTarget) => void;
 }
 
 export interface RenderOptions {
@@ -63,6 +98,8 @@ export interface RenderOptions {
 	 * ヘッダーに日付+曜日、土日祝の背景帯を描く
 	 */
 	dayDetail?: boolean;
+	/** 予定帯の操作(作成・編集・メニュー) */
+	plan?: PlanInteractions;
 }
 
 /** 日詳細モードの1日あたりピクセル幅(通常の日スケールより広め) */
@@ -87,17 +124,22 @@ function clipSpan(
 	};
 }
 
+function formatMonthDay(d: Date): string {
+	return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 export function renderGantt(
 	container: HTMLElement,
 	model: GanttModel,
 	plans: PlanRow[],
+	groups: PlanGroupRow[],
 	scale: GanttScale,
 	range: TimeRange,
 	opts: RenderOptions
 ): void {
 	container.empty();
 
-	if (model.tasks.length === 0 && plans.length === 0) {
+	if (model.tasks.length === 0 && plans.length === 0 && groups.length === 0) {
 		container.createDiv({ cls: "rg-empty", text: "表示できるチケットがありません。" });
 		return;
 	}
@@ -115,7 +157,7 @@ export function renderGantt(
 		.sort((a, b) => a.start.getTime() - b.start.getTime());
 	const packLanes = (list: DatedPlan[]) => {
 		const laneEnds: Date[] = [];
-		const lane = new Map<PlanRow, number>();
+		const lane = new Map<string, number>();
 		for (const plan of list) {
 			// 3日以内の予定はタイトルがバーの右に伸びるため、その分の幅もレーン上で確保する
 			const durationDays = diffDays(plan.start, plan.end) + 1;
@@ -131,48 +173,46 @@ export function renderGantt(
 			} else {
 				laneEnds[index] = effectiveEnd;
 			}
-			lane.set(plan, index);
+			lane.set(plan.id, index);
 		}
 		return { lane, count: laneEnds.length };
 	};
 
-	// 全体予定と個人予定は別の帯としてレーンを分けて積む
-	const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
-	const personalPlans = datedPlans.filter((p) => p.kind === "personal");
-	const teamPack = packLanes(teamPlans);
-
-	// 個人予定は担当者ごとにレーンをまとめる(同一担当者の予定が重なる場合のみ行を増やす)
-	const personalLaneLabels: string[] = [];
-	const personalLaneOf = new Map<PlanRow, number>();
-	{
-		const byOwner = new Map<string, DatedPlan[]>();
-		for (const plan of personalPlans) {
-			const key = (plan.owner ?? "").trim();
-			const list = byOwner.get(key) ?? [];
-			list.push(plan);
-			byOwner.set(key, list);
-		}
-		const owners = Array.from(byOwner.keys()).sort((a, b) => {
-			if (a === "") return 1;
-			if (b === "") return -1;
-			return a.localeCompare(b, "ja");
-		});
-		for (const owner of owners) {
-			const pack = packLanes(byOwner.get(owner) ?? []);
-			const base = personalLaneLabels.length;
-			for (let i = 0; i < pack.count; i++) {
-				personalLaneLabels.push(i === 0 ? owner || "個人予定" : "");
-			}
-			for (const [plan, lane] of pack.lane) {
-				personalLaneOf.set(plan, base + lane);
-			}
+	/**
+	 * 予定帯はグループごとに1行(同じグループ内で期間が重なるときだけサブレーンを増やす)。
+	 * 全体予定のグループを上、個人予定(担当者)のグループを下に積む
+	 */
+	interface PlanBlock {
+		group: PlanGroupRow;
+		top: number;
+		lanes: number;
+		laneOf: Map<string, number>;
+		plans: DatedPlan[];
+		/** 日付なしも含めて予定が1つでもあるか(空のグループには操作のヒントを出す) */
+		hasAnyPlan: boolean;
+	}
+	const blocks: PlanBlock[] = [];
+	let blockTop = HEADER_HEIGHT;
+	for (const kind of ["team", "personal"] as const) {
+		for (const group of groups.filter((g) => g.kind === kind)) {
+			const list = datedPlans.filter((p) => p.groupId === group.id);
+			const pack = packLanes(list);
+			const lanes = Math.max(1, pack.count);
+			blocks.push({
+				group,
+				top: blockTop,
+				lanes,
+				laneOf: pack.lane,
+				plans: list,
+				hasAnyPlan: plans.some((p) => p.groupId === group.id),
+			});
+			blockTop += lanes * rowHeight;
 		}
 	}
-	const personalLaneCount = personalLaneLabels.length;
-
-	const planLaneCount = teamPack.count + personalLaneCount;
-	const teamTop = HEADER_HEIGHT;
-	const personalTop = teamTop + teamPack.count * rowHeight;
+	const planLaneCount = Math.round((blockTop - HEADER_HEIGHT) / rowHeight);
+	const firstPersonal = blocks.find((b) => b.group.kind === "personal");
+	const kindSeparatorY =
+		firstPersonal && blocks.some((b) => b.group.kind === "team") ? firstPersonal.top : null;
 
 	const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
 	const tasksHeight = model.tasks.length * rowHeight;
@@ -229,7 +269,7 @@ export function renderGantt(
 		});
 	};
 
-	// ---- 上部固定エリア: 時間軸ヘッダー+全体予定(縦スクロールしても上部に固定) ----
+	// ---- 上部固定エリア: 時間軸ヘッダー+予定帯(縦スクロールしても上部に固定) ----
 	const stickyTop = container.createDiv({ cls: "rg-sticky-top" });
 
 	const leftTop = stickyTop.createDiv({ cls: "rg-left rg-left-top" });
@@ -240,17 +280,20 @@ export function renderGantt(
 	const leftHeader = leftTop.createDiv({ cls: "rg-left-header" });
 	leftHeader.style.height = `${HEADER_HEIGHT}px`;
 	leftHeader.setText("チケット");
-	if (teamPack.count > 0) {
-		const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-		planLabel.style.height = `${teamPack.count * rowHeight}px`;
-		planLabel.style.paddingLeft = "8px";
-		planLabel.setText("全体予定");
-	}
-	for (const label of personalLaneLabels) {
-		const laneRow = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label rg-plan-owner-row" });
-		laneRow.style.height = `${rowHeight}px`;
-		laneRow.style.paddingLeft = "8px";
-		laneRow.setText(label);
+	for (const block of blocks) {
+		const row = leftTop.createDiv({
+			cls: `rg-left-row rg-plan-row rg-plan-group-row rg-plan-group-${block.group.kind}`,
+		});
+		row.style.height = `${block.lanes * rowHeight}px`;
+		const dot = row.createSpan({ cls: "rg-plan-group-dot" });
+		dot.style.backgroundColor = block.group.color;
+		row.createSpan({ cls: "rg-plan-group-name", text: block.group.name });
+		if (opts.plan) {
+			const plan = opts.plan;
+			row.addClass("is-clickable");
+			row.setAttr("title", `${block.group.name}: クリックで${groupNoun(block.group.kind)}の設定`);
+			row.addEventListener("click", () => plan.onGroupOpen(block.group.id, row.getBoundingClientRect()));
+		}
 	}
 
 	const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
@@ -261,7 +304,7 @@ export function renderGantt(
 	});
 	chartTop.appendChild(topSvg);
 
-	// 全体予定エリアの背景
+	// 予定帯の背景
 	if (planLaneCount > 0) {
 		topSvg.appendChild(
 			svg("rect", {
@@ -283,9 +326,7 @@ export function renderGantt(
 	for (let i = 0; i <= planLaneCount; i++) {
 		const y = HEADER_HEIGHT + i * rowHeight;
 		// 最下段と、全体予定/個人予定の境目は太い区切り線にする
-		const isSeparator =
-			i === planLaneCount ||
-			(teamPack.count > 0 && personalLaneCount > 0 && i === teamPack.count);
+		const isSeparator = i === planLaneCount || y === kindSeparatorY;
 		topSvg.appendChild(
 			svg("line", {
 				x1: 0,
@@ -295,6 +336,34 @@ export function renderGantt(
 				class: isSeparator ? "rg-separator" : "rg-grid",
 			})
 		);
+	}
+
+	// グループごとの操作レーン(透明。ドラッグで予定を作る受け皿)
+	for (const block of blocks) {
+		const lane = svg("rect", {
+			x: 0,
+			y: block.top,
+			width: chartWidth,
+			height: block.lanes * rowHeight,
+			class: `rg-plan-lane rg-plan-lane-${block.group.kind}${opts.plan ? " is-editable" : ""}`,
+			"data-plan-group": block.group.id,
+		});
+		if (opts.plan) {
+			const title = svg("title");
+			title.textContent = `${block.group.name}: ドラッグで予定を追加、右クリックでメニュー`;
+			lane.appendChild(title);
+		}
+		topSvg.appendChild(lane);
+		if (opts.plan && !block.hasAnyPlan) {
+			const hint = svg("text", {
+				x: 6,
+				y: block.top + Math.round(rowHeight / 2 + opts.fontSize * 0.35),
+				"font-size": opts.fontSize,
+				class: "rg-plan-hint",
+			});
+			hint.textContent = "ドラッグで予定を追加";
+			topSvg.appendChild(hint);
+		}
 	}
 
 	// ヘッダー目盛り
@@ -349,16 +418,19 @@ export function renderGantt(
 	}
 
 	// 予定の描画: 1日の予定は▼マーカー+タイトル、複数日はタイトル入りブロック
-	const drawPlans = (list: DatedPlan[], laneOf: Map<PlanRow, number>, top: number) => {
-		for (const plan of list) {
-			const lane = laneOf.get(plan) ?? 0;
-			const y = top + lane * rowHeight + barPadding;
+	for (const block of blocks) {
+		for (const plan of block.plans) {
+			const lane = block.laneOf.get(plan.id) ?? 0;
+			const y = block.top + lane * rowHeight + barPadding;
 			const h = rowHeight - barPadding * 2;
 			const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
 			const kindClass = plan.kind === "personal" ? " rg-plan-personal" : "";
-			const group = svg("g", {});
+			const group = svg("g", {
+				class: `rg-plan-item${opts.plan ? " is-editable" : ""}`,
+				"data-plan-id": plan.id,
+			});
 			const title = svg("title");
-			title.textContent = planTooltip(plan);
+			title.textContent = planTooltip(plan, block.group.name);
 			group.appendChild(title);
 
 			if (diffDays(plan.start, plan.end) === 0) {
@@ -425,15 +497,126 @@ export function renderGantt(
 			}
 			topSvg.appendChild(group);
 		}
-	};
-	drawPlans(teamPlans, teamPack.lane, teamTop);
-	drawPlans(personalPlans, personalLaneOf, personalTop);
+	}
 
 	// 今日の縦線(上部固定エリア側)
 	if (todayX !== null) {
 		topSvg.appendChild(
 			svg("line", { x1: todayX, y1: 0, x2: todayX, y2: topHeight, class: "rg-today" })
 		);
+	}
+
+	// ---- 予定帯の操作: クリックで編集、ドラッグで作成、右クリックでメニュー ----
+	if (opts.plan) {
+		const plan = opts.plan;
+		const blockOf = (groupId: string) => blocks.find((b) => b.group.id === groupId);
+		/** マウス位置の日インデックス(表示範囲の左端からの日数) */
+		const dayIndexAt = (e: MouseEvent) => {
+			const rect = topSvg.getBoundingClientRect();
+			return Math.max(0, Math.min(range.days, Math.floor((e.clientX - rect.left) / ppd)));
+		};
+
+		topSvg.addEventListener("click", (e) => {
+			const item = (e.target as Element).closest("[data-plan-id]");
+			if (!item) return;
+			const planId = item.getAttribute("data-plan-id");
+			if (planId) plan.onOpen(planId, item.getBoundingClientRect());
+		});
+
+		topSvg.addEventListener("contextmenu", (e) => {
+			const target = e.target as Element;
+			const item = target.closest("[data-plan-id]");
+			if (item) {
+				const planId = item.getAttribute("data-plan-id");
+				if (!planId) return;
+				e.preventDefault();
+				plan.onContextMenu(e, { type: "plan", planId });
+				return;
+			}
+			const lane = target.closest("[data-plan-group]");
+			if (!lane) return;
+			const groupId = lane.getAttribute("data-plan-group");
+			if (!groupId) return;
+			e.preventDefault();
+			plan.onContextMenu(e, { type: "lane", groupId, date: addDays(range.start, dayIndexAt(e)) });
+		});
+
+		topSvg.addEventListener("mousedown", (e) => {
+			if (e.button !== 0) return;
+			const target = e.target as Element;
+			if (target.closest("[data-plan-id]")) return;
+			const lane = target.closest("[data-plan-group]");
+			if (!lane) return;
+			const groupId = lane.getAttribute("data-plan-group");
+			const block = groupId ? blockOf(groupId) : undefined;
+			if (!groupId || !block) return;
+			e.preventDefault();
+
+			// ドラッグ範囲の仮表示(最下段のレーンに描く)
+			const startIndex = dayIndexAt(e);
+			let currentIndex = startIndex;
+			const ghostY = block.top + (block.lanes - 1) * rowHeight + barPadding;
+			const ghostH = rowHeight - barPadding * 2;
+			const ghost = svg("rect", { y: ghostY, height: ghostH, rx: 3, class: "rg-plan-ghost" });
+			const ghostLabel = svg("text", {
+				y: ghostY + Math.round(ghostH / 2 + opts.fontSize * 0.35),
+				"font-size": opts.fontSize,
+				class: "rg-plan-ghost-label",
+			});
+			topSvg.appendChild(ghost);
+			topSvg.appendChild(ghostLabel);
+			const removeGhost = () => {
+				ghost.remove();
+				ghostLabel.remove();
+			};
+			const update = () => {
+				const s = Math.min(startIndex, currentIndex);
+				const en = Math.max(startIndex, currentIndex);
+				ghost.setAttribute("x", String(s * ppd));
+				ghost.setAttribute("width", String((en - s + 1) * ppd));
+				ghostLabel.setAttribute("x", String((en + 1) * ppd + 4));
+				const from = addDays(range.start, s);
+				const to = addDays(range.start, en);
+				ghostLabel.textContent =
+					en === s
+						? `${formatMonthDay(from)} · 1日`
+						: `${formatMonthDay(from)} 〜 ${formatMonthDay(to)} · ${en - s + 1}日`;
+			};
+			update();
+
+			const detach = () => {
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+				document.removeEventListener("keydown", onKey);
+				document.body.removeClass("rg-plan-dragging");
+			};
+			const onMove = (ev: MouseEvent) => {
+				currentIndex = dayIndexAt(ev);
+				update();
+			};
+			const onKey = (ev: KeyboardEvent) => {
+				if (ev.key === "Escape") {
+					detach();
+					removeGhost();
+				}
+			};
+			const onUp = () => {
+				detach();
+				const s = Math.min(startIndex, currentIndex);
+				const en = Math.max(startIndex, currentIndex);
+				plan.onCreate({
+					groupId,
+					start: addDays(range.start, s),
+					end: addDays(range.start, en),
+					anchor: ghost.getBoundingClientRect(),
+					cancel: removeGhost,
+				});
+			};
+			document.body.addClass("rg-plan-dragging");
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
+			document.addEventListener("keydown", onKey);
+		});
 	}
 
 	// ---- チケット行(縦スクロール対象) ----
@@ -610,12 +793,11 @@ function taskTooltip(task: GanttTask): string {
 	return lines.join("\n");
 }
 
-function planTooltip(plan: PlanRow): string {
-	const lines = [
+function planTooltip(plan: PlanRow, groupName: string): string {
+	return [
 		plan.name,
 		`期間: ${formatDate(plan.start)} 〜 ${formatDate(plan.end)}`,
-		plan.kind === "personal" ? "個人予定" : "全体予定",
-	];
-	if (plan.kind === "personal" && plan.owner) lines.push(`担当: ${plan.owner}`);
-	return lines.join("\n");
+		plan.kind === "personal" ? `担当: ${groupName}` : `全体予定 / ${groupName}`,
+		"クリックで編集",
+	].join("\n");
 }

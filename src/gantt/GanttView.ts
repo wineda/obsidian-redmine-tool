@@ -1,13 +1,31 @@
-import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Menu, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type RedmineGanttPlugin from "../main";
 import { RedmineClient } from "../redmine/client";
 import { buildGanttModel, GanttModel } from "../redmine/mapper";
 import type { RedmineIssue } from "../redmine/types";
-import type { GanttFilter, GanttScale, PlanItem, ViewMode } from "../settings";
+import type { GanttFilter, GanttScale, PlanGroup, PlanKind, ViewMode } from "../settings";
 import { IssueEditModal } from "../issue/IssueEditModal";
 import { PlanModal } from "../plan/PlanModal";
-import { DEFAULT_LEFT_WIDTH, PlanRow, renderGantt } from "./renderer";
-import { TimeRange, monthRange } from "./scale";
+import { GroupPopover, PlanPopover, closePlanPopover } from "../plan/PlanPopover";
+import {
+	PlanSnapshot,
+	defaultGroupColor,
+	ensureUncategorizedGroup,
+	groupNoun,
+	newPlanId,
+	parsePlanDate,
+	planKindLabel,
+	snapshotPlans,
+} from "../plan/plans";
+import {
+	DEFAULT_LEFT_WIDTH,
+	PlanCreateRequest,
+	PlanGroupRow,
+	PlanInteractions,
+	PlanRow,
+	renderGantt,
+} from "./renderer";
+import { TimeRange, formatDate, monthRange } from "./scale";
 import {
 	SituationFilter,
 	TableGroupBy,
@@ -33,11 +51,9 @@ const ASSIGNEE_PALETTE = [
 const NO_ASSIGNEE = "";
 const NO_ASSIGNEE_LABEL = "(担当者なし)";
 
-/** "YYYY-MM-DD" をローカルタイムの日付として解釈する。空文字は null */
-function parsePlanDate(s: string): Date | null {
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-	const [y, m, d] = s.split("-").map(Number);
-	return new Date(y, m - 1, d);
+/** マウス位置をポップオーバーのアンカーにする */
+function rectAtMouse(e: MouseEvent): DOMRect {
+	return new DOMRect(e.clientX, e.clientY, 0, 0);
 }
 
 export class GanttView extends ItemView {
@@ -71,6 +87,9 @@ export class GanttView extends ItemView {
 	private rangeYear: number;
 	private rangeMonth: number;
 	private rangeMonths = 2;
+
+	/** ガント上での予定操作を1回分だけ取り消すためのスナップショット */
+	private planUndo: PlanSnapshot | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: RedmineGanttPlugin) {
 		super(leaf);
@@ -259,10 +278,10 @@ export class GanttView extends ItemView {
 		this.assigneeBtn.setAttr("aria-label", "担当者で絞り込み");
 		this.assigneeBtn.addEventListener("click", () => this.toggleAssigneePanel());
 
-		// 全体予定の編集
+		// 予定の一覧編集
 		const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
 		setIcon(planBtn, "calendar-range");
-		planBtn.setAttr("aria-label", "全体予定を編集");
+		planBtn.setAttr("aria-label", "予定の一覧を編集");
 		planBtn.addEventListener("click", () => this.openPlanModal());
 
 		this.statusEl = toolbar.createDiv({ cls: "rg-status" });
@@ -285,6 +304,8 @@ export class GanttView extends ItemView {
 		this.legendEl.hide();
 
 		this.chartEl = container.createDiv({ cls: "rg-chart-container" });
+		// スクロールするとポップオーバーの位置がずれるので閉じる
+		this.chartEl.addEventListener("scroll", () => closePlanPopover());
 		this.updateScaleVisibility();
 
 		await this.refresh();
@@ -485,29 +506,302 @@ export class GanttView extends ItemView {
 		});
 	}
 
-	/** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
-	private planRows(): PlanRow[] {
-		const rows = this.plugin.settings.planItems.map((item: PlanItem): PlanRow => {
+	// ---- 予定(全体予定・個人予定) ----
+
+	private planGroupById(id: string): PlanGroup | undefined {
+		return this.plugin.settings.planGroups.find((g) => g.id === id);
+	}
+
+	private planGroupsOfKind(kind: PlanKind): PlanGroup[] {
+		return this.plugin.settings.planGroups.filter((g) => g.kind === kind);
+	}
+
+	/** 個人予定の担当者名のサジェスト候補(設定+取得済みチケットの担当者) */
+	private planSuggestNames(): string[] {
+		const names = new Set(this.plugin.planSuggestNames());
+		for (const issue of this.rawIssues ?? []) {
+			if (issue.assigned_to?.name) names.add(issue.assigned_to.name);
+		}
+		return Array.from(names).sort((a, b) => a.localeCompare(b, "ja"));
+	}
+
+	/** 表示するグループ(非表示を除く)と、その予定を表示用に変換する */
+	private planRows(): { plans: PlanRow[]; groups: PlanGroupRow[] } {
+		const settings = this.plugin.settings;
+		const visibleGroups = settings.planGroups.filter((g) => !g.hidden);
+		const groups: PlanGroupRow[] = visibleGroups.map((g) => ({
+			id: g.id,
+			name: g.name,
+			color: g.color,
+			kind: g.kind,
+		}));
+		const byId = new Map(visibleGroups.map((g) => [g.id, g]));
+		const plans: PlanRow[] = [];
+		for (const item of settings.planItems) {
+			const group = byId.get(item.groupId ?? "");
+			if (!group) continue;
 			let start = parsePlanDate(item.start);
 			let end = parsePlanDate(item.end);
 			if (start && end && start > end) [start, end] = [end, start];
 			// 片方だけ設定されている場合は1日分の予定として扱う
 			if (start && !end) end = start;
 			if (!start && end) start = end;
-			return {
+			plans.push({
+				id: item.id,
 				name: item.name,
 				start,
 				end,
-				color: item.color ?? "",
-				kind: item.kind ?? "team",
-				owner: item.owner ?? "",
-			};
-		});
-		return rows.sort((a, b) => {
+				color: item.color || group.color,
+				kind: group.kind,
+				groupId: group.id,
+			});
+		}
+		plans.sort((a, b) => {
 			if (!a.start) return 1;
 			if (!b.start) return -1;
 			return a.start.getTime() - b.start.getTime();
 		});
+		return { plans, groups };
+	}
+
+	/**
+	 * 予定を変更して即保存し、再描画する。直前の状態を1回分だけ保持し、
+	 * 通知の「元に戻す」で戻せるようにする
+	 */
+	private mutatePlans(message: string, change: () => void): void {
+		this.planUndo = snapshotPlans(this.plugin.settings);
+		change();
+		void this.plugin.saveSettings();
+		this.renderView();
+		this.showUndoNotice(message);
+	}
+
+	private showUndoNotice(message: string): void {
+		const frag = document.createDocumentFragment();
+		frag.createSpan({ text: message });
+		const undoBtn = frag.createEl("button", { cls: "rg-undo-btn", text: "元に戻す" });
+		const notice = new Notice(frag, 8000);
+		undoBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.undoPlans();
+			notice.hide();
+		});
+	}
+
+	private undoPlans(): void {
+		if (!this.planUndo) return;
+		this.plugin.settings.planGroups = this.planUndo.groups;
+		this.plugin.settings.planItems = this.planUndo.items;
+		this.planUndo = null;
+		void this.plugin.saveSettings();
+		this.renderView();
+		new Notice("予定の変更を元に戻しました");
+	}
+
+	/** 帯の空白のドラッグ・右クリックから予定を追加する */
+	private openPlanCreator(req: PlanCreateRequest): void {
+		const group = this.planGroupById(req.groupId);
+		if (!group) {
+			req.cancel();
+			return;
+		}
+		new PlanPopover({
+			host: this.contentEl,
+			anchor: req.anchor,
+			mode: "create",
+			kind: group.kind,
+			groups: this.planGroupsOfKind(group.kind),
+			value: {
+				name: "",
+				groupId: group.id,
+				start: formatDate(req.start),
+				end: formatDate(req.end),
+				color: "",
+			},
+			onSubmit: (value) =>
+				this.mutatePlans(`「${value.name}」を追加しました`, () => {
+					this.plugin.settings.planItems.push({
+						id: newPlanId("plan"),
+						name: value.name,
+						start: value.start,
+						end: value.end,
+						groupId: value.groupId,
+						color: value.color,
+					});
+				}),
+			onCancel: () => req.cancel(),
+		});
+	}
+
+	/** バーのクリック・右クリックから予定を編集する */
+	private openPlanEditor(planId: string, anchor: DOMRect): void {
+		const item = this.plugin.settings.planItems.find((i) => i.id === planId);
+		if (!item) return;
+		const group = this.planGroupById(item.groupId ?? "");
+		const kind: PlanKind = group?.kind ?? "team";
+		new PlanPopover({
+			host: this.contentEl,
+			anchor,
+			mode: "edit",
+			kind,
+			groups: this.planGroupsOfKind(kind),
+			value: {
+				name: item.name,
+				groupId: item.groupId ?? "",
+				start: item.start,
+				end: item.end,
+				color: item.color ?? "",
+			},
+			onSubmit: (value) =>
+				this.mutatePlans(`「${value.name}」を保存しました`, () => {
+					item.name = value.name;
+					item.start = value.start;
+					item.end = value.end;
+					item.groupId = value.groupId;
+					item.color = value.color;
+				}),
+			onDelete: () => this.deletePlan(planId),
+		});
+	}
+
+	private deletePlan(planId: string): void {
+		const item = this.plugin.settings.planItems.find((i) => i.id === planId);
+		if (!item) return;
+		this.mutatePlans(`「${item.name}」を削除しました`, () => {
+			this.plugin.settings.planItems.remove(item);
+		});
+	}
+
+	/** グループ(系統・担当者)の名前と色を編集する */
+	private openGroupEditor(groupId: string, anchor: DOMRect): void {
+		const group = this.planGroupById(groupId);
+		if (!group) return;
+		new GroupPopover({
+			app: this.app,
+			host: this.contentEl,
+			anchor,
+			mode: "edit",
+			kind: group.kind,
+			value: { name: group.name, color: group.color },
+			suggestNames: () => this.planSuggestNames(),
+			fixedColorFor: (name) => this.fixedAssigneeColor(name),
+			onSubmit: (value) =>
+				this.mutatePlans(`「${value.name}」を保存しました`, () => {
+					group.name = value.name;
+					group.color = value.color;
+				}),
+			onDelete: () =>
+				this.mutatePlans(`「${group.name}」を削除しました(予定は未分類へ移動)`, () => {
+					const settings = this.plugin.settings;
+					settings.planGroups.remove(group);
+					const owned = settings.planItems.filter((item) => item.groupId === group.id);
+					if (owned.length > 0) {
+						const fallback = ensureUncategorizedGroup(settings.planGroups, group.kind);
+						for (const item of owned) item.groupId = fallback.id;
+					}
+				}),
+		});
+	}
+
+	private openGroupCreator(kind: PlanKind, anchor: DOMRect): void {
+		const settings = this.plugin.settings;
+		new GroupPopover({
+			app: this.app,
+			host: this.contentEl,
+			anchor,
+			mode: "create",
+			kind,
+			value: {
+				name: "",
+				color: defaultGroupColor(settings.planGroups, kind, "", settings.assigneeColors),
+			},
+			suggestNames: () => this.planSuggestNames(),
+			fixedColorFor: (name) => this.fixedAssigneeColor(name),
+			onSubmit: (value) =>
+				this.mutatePlans(`「${value.name}」を追加しました`, () => {
+					settings.planGroups.push({
+						id: newPlanId("group"),
+						name: value.name,
+						color: value.color,
+						kind,
+					});
+				}),
+		});
+	}
+
+	/** 「担当者の色分け」設定の固定色。なければ null */
+	private fixedAssigneeColor(name: string): string | null {
+		const fixed = this.plugin.settings.assigneeColors.find(
+			(entry) => entry.name !== "" && entry.name === name
+		);
+		return fixed ? fixed.color : null;
+	}
+
+	/** 予定帯の操作をレンダラーへ渡す */
+	private planInteractions(): PlanInteractions {
+		return {
+			onCreate: (req) => this.openPlanCreator(req),
+			onOpen: (planId, anchor) => this.openPlanEditor(planId, anchor),
+			onGroupOpen: (groupId, anchor) => this.openGroupEditor(groupId, anchor),
+			onContextMenu: (e, target) => {
+				const menu = new Menu();
+				if (target.type === "plan") {
+					const item = this.plugin.settings.planItems.find((i) => i.id === target.planId);
+					if (!item) return;
+					menu.addItem((mi) =>
+						mi
+							.setTitle(`「${item.name}」を編集…`)
+							.setIcon("pencil")
+							.onClick(() => this.openPlanEditor(item.id, rectAtMouse(e)))
+					);
+					menu.addItem((mi) =>
+						mi
+							.setTitle("削除")
+							.setIcon("trash")
+							.onClick(() => this.deletePlan(item.id))
+					);
+				} else {
+					const group = this.planGroupById(target.groupId);
+					if (!group) return;
+					const date = target.date;
+					menu.addItem((mi) =>
+						mi
+							.setTitle(`${date.getMonth() + 1}/${date.getDate()} に「${group.name}」の予定を追加…`)
+							.setIcon("plus")
+							.onClick(() =>
+								this.openPlanCreator({
+									groupId: group.id,
+									start: date,
+									end: date,
+									anchor: rectAtMouse(e),
+									cancel: () => {},
+								})
+							)
+					);
+					menu.addItem((mi) =>
+						mi
+							.setTitle(`「${group.name}」の設定…`)
+							.setIcon("settings")
+							.onClick(() => this.openGroupEditor(group.id, rectAtMouse(e)))
+					);
+					menu.addSeparator();
+					menu.addItem((mi) =>
+						mi
+							.setTitle(`${groupNoun(group.kind)}を追加…`)
+							.setIcon("plus-circle")
+							.onClick(() => this.openGroupCreator(group.kind, rectAtMouse(e)))
+					);
+				}
+				menu.addSeparator();
+				menu.addItem((mi) =>
+					mi
+						.setTitle("予定の一覧を編集…")
+						.setIcon("calendar-range")
+						.onClick(() => this.openPlanModal())
+				);
+				menu.showAtMouseEvent(e);
+			},
+		};
 	}
 
 	/** 設定変更などによる外部からの再描画 */
@@ -515,44 +809,95 @@ export class GanttView extends ItemView {
 		this.renderView();
 	}
 
-	/** 表示側フィルタを適用して再描画する(再取得はしない) */
-	/** ガント表示時の全体予定の凡例(カラーキー)。クリックで予定の編集を開く */
+	/**
+	 * ガント表示時の予定の凡例。グループごとに色と名前を出し、
+	 * クリックで表示/非表示、右クリックで設定、「＋」で追加
+	 */
 	private renderLegend(): void {
 		const legend = this.legendEl;
 		if (!legend) return;
 		legend.empty();
-		const teamPlans = this.plugin.settings.planItems.filter(
-			(item) => item.name !== "" && (item.kind ?? "team") !== "personal"
-		);
-		if (this.plugin.settings.viewMode !== "gantt" || teamPlans.length === 0) {
+		if (this.plugin.settings.viewMode !== "gantt") {
 			legend.hide();
 			return;
 		}
 		legend.show();
-		legend.createSpan({ cls: "rg-legend-title", text: "全体予定:" });
-		for (const item of teamPlans) {
-			const entry = legend.createSpan({ cls: "rg-legend-item" });
-			const dot = entry.createSpan({ cls: "rg-legend-dot" });
-			if (item.color) dot.style.backgroundColor = item.color;
-			entry.createSpan({ text: item.name });
-			if (item.start || item.end) {
-				entry.setAttr("title", `${item.start || "?"} 〜 ${item.end || "?"}`);
+		const settings = this.plugin.settings;
+		for (const kind of ["team", "personal"] as const) {
+			if (kind === "personal") legend.createSpan({ cls: "rg-legend-sep" });
+			legend.createSpan({ cls: "rg-legend-title", text: `${planKindLabel(kind)}:` });
+			for (const group of settings.planGroups.filter((g) => g.kind === kind)) {
+				const entry = legend.createEl("button", { cls: "rg-legend-item" });
+				entry.toggleClass("is-hidden", !!group.hidden);
+				const dot = entry.createSpan({ cls: "rg-legend-dot" });
+				dot.style.backgroundColor = group.color;
+				entry.createSpan({ text: group.name });
+				const count = settings.planItems.filter((item) => item.groupId === group.id).length;
+				entry.setAttr(
+					"title",
+					`${count}件。クリックで${group.hidden ? "表示" : "非表示"}、右クリックで設定`
+				);
+				entry.addEventListener("click", () => {
+					group.hidden = !group.hidden;
+					void this.plugin.saveSettings();
+					this.renderView();
+				});
+				entry.addEventListener("contextmenu", (e) => {
+					e.preventDefault();
+					const menu = new Menu();
+					menu.addItem((mi) =>
+						mi
+							.setTitle(`「${group.name}」の設定…`)
+							.setIcon("settings")
+							.onClick(() => this.openGroupEditor(group.id, entry.getBoundingClientRect()))
+					);
+					menu.addItem((mi) =>
+						mi
+							.setTitle(group.hidden ? "ガントに表示する" : "ガントで非表示にする")
+							.setIcon(group.hidden ? "eye" : "eye-off")
+							.onClick(() => {
+								group.hidden = !group.hidden;
+								void this.plugin.saveSettings();
+								this.renderView();
+							})
+					);
+					menu.showAtMouseEvent(e);
+				});
 			}
-			entry.addEventListener("click", () => this.openPlanModal());
+			const add = legend.createEl("button", { cls: "rg-legend-add", text: "＋" });
+			add.setAttr("aria-label", `${groupNoun(kind)}を追加`);
+			add.setAttr("title", `${groupNoun(kind)}を追加`);
+			add.addEventListener("click", () => this.openGroupCreator(kind, add.getBoundingClientRect()));
 		}
+		const edit = legend.createEl("button", { cls: "rg-legend-edit", text: "一覧を編集" });
+		edit.setAttr("title", "予定の一覧をまとめて編集");
+		edit.addEventListener("click", () => this.openPlanModal());
 	}
 
-	/** 予定の編集モーダルを開く(ツールバー・凡例・コマンドから共用) */
+	/** 予定の一覧編集モーダルを開く(ツールバー・凡例・右クリックメニュー・コマンドから共用) */
 	openPlanModal(): void {
-		new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
-			this.plugin.settings.planItems = items;
-			void this.plugin.saveSettings();
-			this.renderView();
-		}).open();
+		closePlanPopover();
+		new PlanModal(
+			this.app,
+			this.plugin.settings.planGroups,
+			this.plugin.settings.planItems,
+			{
+				suggestNames: () => this.planSuggestNames(),
+				assigneeColors: this.plugin.settings.assigneeColors,
+			},
+			(groups, items) => {
+				this.plugin.settings.planGroups = groups;
+				this.plugin.settings.planItems = items;
+				void this.plugin.saveSettings();
+				this.renderView();
+			}
+		).open();
 	}
 
 	private renderView(): void {
 		if (!this.chartEl || !this.rawIssues) return;
+		// 描画し直すとポップオーバーの位置の基準がなくなるので閉じる
+		closePlanPopover();
 		const { issues, contextIds } = this.visibleIssues();
 		const model: GanttModel = buildGanttModel(issues, contextIds);
 		const client = new RedmineClient(this.plugin.settings);
@@ -587,7 +932,11 @@ export class GanttView extends ItemView {
 				groupBy: this.tableGroupBy,
 			});
 		} else {
-			renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
+			const { plans, groups } = this.planRows();
+			renderGantt(this.chartEl, model, plans, groups, this.scale, this.ganttRange(), {
+				...opts,
+				plan: this.planInteractions(),
+			});
 		}
 		const suffix = this.lastFetchedAt ? ` / 最終更新 ${this.lastFetchedAt}` : "";
 		const shown = issues.length - contextIds.size;
@@ -614,6 +963,7 @@ export class GanttView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		closePlanPopover();
 		this.contentEl.empty();
 	}
 }
