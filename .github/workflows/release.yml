@@ -1,0 +1,59 @@
+# main に push されたとき、manifest.json の version に対応するリリースがまだなければ
+# ビルドしてリリースを作成する(BRAT はこのリリースの main.js / manifest.json / styles.css を取得する)。
+# 手順: manifest.json と versions.json の version を上げて(npm version patch など)main に push するだけ。
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: manifest.json の version を読む
+        id: manifest
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: 同じ version のリリースが既にあるか調べる
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.manifest.outputs.version }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "リリース ${{ steps.manifest.outputs.version }} は作成済みのためスキップします"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.existing.outputs.exists == 'false'
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: ビルド
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          npm ci
+          npm run build
+
+      - name: リリースを作成(タグ = version、main.js / manifest.json / styles.css を添付)
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes \
+            main.js manifest.json styles.css
