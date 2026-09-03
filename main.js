@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => RedmineGanttPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian8 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -38,6 +38,7 @@ var DEFAULT_SETTINGS = {
   filters: [],
   activeFilter: "",
   viewMode: "gantt",
+  planGroups: [],
   planItems: [],
   assigneeColors: [],
   tableFontSize: 11,
@@ -167,7 +168,7 @@ var RedmineGanttSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 
 // src/gantt/GanttView.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/redmine/client.ts
 var import_obsidian2 = require("obsidian");
@@ -871,12 +872,250 @@ ${message}`);
 };
 
 // src/plan/PlanModal.ts
+var import_obsidian6 = require("obsidian");
+
+// src/plan/colorPicker.ts
 var import_obsidian4 = require("obsidian");
-var PLAN_PRESET_COLORS = ["#d9534f", "#e8883a", "#3f9e4d", "#3f7fd9", "#7a5fd0"];
-var PlanModal = class extends import_obsidian4.Modal {
-  constructor(app, items, onSave) {
+
+// src/plan/plans.ts
+var PLAN_COLORS = [
+  { hex: "#d9534f", label: "\u8D64" },
+  { hex: "#e8883a", label: "\u30AA\u30EC\u30F3\u30B8" },
+  { hex: "#3f9e4d", label: "\u7DD1" },
+  { hex: "#3f7fd9", label: "\u9752" },
+  { hex: "#7a5fd0", label: "\u7D2B" },
+  { hex: "#2f9e9b", label: "\u9752\u7DD1" },
+  { hex: "#b0578d", label: "\u30D4\u30F3\u30AF" },
+  { hex: "#98771d", label: "\u8336" }
+];
+var UNCATEGORIZED_NAME = "\u672A\u5206\u985E";
+var UNCATEGORIZED_COLOR = "#8a8f9a";
+function newPlanId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+}
+function planKindLabel(kind) {
+  return kind === "personal" ? "\u500B\u4EBA\u4E88\u5B9A" : "\u5168\u4F53\u4E88\u5B9A";
+}
+function groupNoun(kind) {
+  return kind === "personal" ? "\u62C5\u5F53\u8005" : "\u30B0\u30EB\u30FC\u30D7";
+}
+function ensureUncategorizedGroup(groups, kind) {
+  const existing = groups.find((g) => g.kind === kind && g.name === UNCATEGORIZED_NAME);
+  if (existing)
+    return existing;
+  const group = {
+    id: newPlanId("group"),
+    name: UNCATEGORIZED_NAME,
+    color: UNCATEGORIZED_COLOR,
+    kind
+  };
+  groups.push(group);
+  return group;
+}
+function defaultGroupColor(groups, kind, name, assigneeColors) {
+  if (kind === "personal" && name !== "") {
+    const fixed = assigneeColors.find((entry) => entry.name !== "" && entry.name === name);
+    if (fixed)
+      return fixed.color;
+  }
+  const sameKind = groups.filter((g) => g.kind === kind);
+  const used = new Set(sameKind.map((g) => g.color.toLowerCase()));
+  const unused = PLAN_COLORS.find((c) => !used.has(c.hex));
+  if (unused)
+    return unused.hex;
+  return PLAN_COLORS[sameKind.length % PLAN_COLORS.length].hex;
+}
+function migratePlans(settings) {
+  var _a;
+  let changed = false;
+  if (!Array.isArray(settings.planGroups)) {
+    settings.planGroups = [];
+    changed = true;
+  }
+  const groups = settings.planGroups;
+  const ids = new Set(groups.map((g) => g.id));
+  for (const item of settings.planItems) {
+    if (item.groupId && ids.has(item.groupId))
+      continue;
+    const kind = item.kind === "personal" ? "personal" : "team";
+    const owner = ((_a = item.owner) != null ? _a : "").trim();
+    let group;
+    if (kind === "personal" && owner !== "") {
+      group = groups.find((g) => g.kind === "personal" && g.name === owner);
+      if (!group) {
+        group = {
+          id: newPlanId("group"),
+          name: owner,
+          color: defaultGroupColor(groups, "personal", owner, settings.assigneeColors),
+          kind: "personal"
+        };
+        groups.push(group);
+      }
+    } else {
+      group = ensureUncategorizedGroup(groups, kind);
+    }
+    ids.add(group.id);
+    item.groupId = group.id;
+    changed = true;
+  }
+  return changed;
+}
+function comparePlanItems(a, b) {
+  if (!a.start && !b.start)
+    return a.name.localeCompare(b.name, "ja");
+  if (!a.start)
+    return 1;
+  if (!b.start)
+    return -1;
+  return a.start.localeCompare(b.start) || a.name.localeCompare(b.name, "ja");
+}
+function parsePlanDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s))
+    return null;
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function snapshotPlans(settings) {
+  return {
+    groups: settings.planGroups.map((g) => ({ ...g })),
+    items: settings.planItems.map((item) => ({ ...item }))
+  };
+}
+
+// src/plan/colorPicker.ts
+var customInput = null;
+function pickCustomColor(current, onPick) {
+  customInput == null ? void 0 : customInput.remove();
+  const input = document.body.createEl("input", { type: "color", cls: "rg-plan-color-input" });
+  customInput = input;
+  input.value = /^#[0-9a-f]{6}$/i.test(current) ? current : "#808080";
+  input.addEventListener("change", () => {
+    onPick(input.value);
+    input.remove();
+    if (customInput === input)
+      customInput = null;
+  });
+  input.click();
+}
+function colorTitle(hex, label, checked) {
+  const frag = document.createDocumentFragment();
+  const dot = frag.createSpan({ cls: "rg-menu-dot" });
+  dot.style.backgroundColor = hex;
+  frag.createSpan({ text: checked ? `${label} \u2713` : label });
+  return frag;
+}
+function buildColorMenu(current, onPick, options = {}) {
+  var _a;
+  const menu = new import_obsidian4.Menu();
+  if (options.reset) {
+    const reset = options.reset;
+    menu.addItem(
+      (item) => {
+        var _a2;
+        return item.setTitle(reset.label).setIcon("rotate-ccw").setDisabled((_a2 = reset.disabled) != null ? _a2 : false).onClick(() => reset.onReset());
+      }
+    );
+    menu.addSeparator();
+  }
+  const cur = current.toLowerCase();
+  for (const color of PLAN_COLORS) {
+    menu.addItem(
+      (item) => item.setTitle(colorTitle(color.hex, color.label, color.hex === cur)).onClick(() => onPick(color.hex))
+    );
+  }
+  menu.addItem(
+    (item) => item.setTitle("\u30AB\u30B9\u30BF\u30E0\u2026").setIcon("palette").onClick(() => pickCustomColor(current, onPick))
+  );
+  (_a = options.extra) == null ? void 0 : _a.call(options, menu);
+  return menu;
+}
+function buildSwatches(container, current, onPick, options = {}) {
+  const row = container.createDiv({ cls: "rg-plan-swatches" });
+  const buttons = [];
+  const select = (color) => {
+    for (const b of buttons)
+      b.el.toggleClass("is-selected", b.color === color.toLowerCase());
+  };
+  if (options.groupColor !== void 0) {
+    const chip = row.createEl("button", { cls: "rg-plan-swatch rg-plan-swatch-group", text: "\u30B0\u30EB\u30FC\u30D7\u8272" });
+    chip.setAttr("aria-label", "\u30B0\u30EB\u30FC\u30D7\u306E\u8272\u3092\u4F7F\u3046");
+    chip.addEventListener("click", (e) => {
+      e.preventDefault();
+      onPick("");
+      select("");
+    });
+    buttons.push({ color: "", el: chip });
+  }
+  for (const color of PLAN_COLORS) {
+    const swatch = row.createEl("button", { cls: "rg-plan-swatch" });
+    swatch.style.backgroundColor = color.hex;
+    swatch.setAttr("aria-label", `\u8272: ${color.label}`);
+    swatch.setAttr("title", color.label);
+    swatch.addEventListener("click", (e) => {
+      e.preventDefault();
+      onPick(color.hex);
+      select(color.hex);
+    });
+    buttons.push({ color: color.hex, el: swatch });
+  }
+  if (options.custom) {
+    const custom = row.createEl("button", { cls: "rg-plan-swatch rg-plan-swatch-custom", text: "\u2026" });
+    custom.setAttr("aria-label", "\u30AB\u30B9\u30BF\u30E0\u8272");
+    custom.setAttr("title", "\u30AB\u30B9\u30BF\u30E0\u8272");
+    custom.addEventListener("click", (e) => {
+      e.preventDefault();
+      pickCustomColor(current, (color) => {
+        onPick(color);
+        select(color);
+      });
+    });
+  }
+  select(current);
+  return select;
+}
+
+// src/plan/NameSuggest.ts
+var import_obsidian5 = require("obsidian");
+var NameSuggest = class extends import_obsidian5.AbstractInputSuggest {
+  constructor(app, textInputEl, names, onPick) {
+    super(app, textInputEl);
+    this.textInputEl = textInputEl;
+    this.names = names;
+    this.onPick = onPick;
+  }
+  getSuggestions(query) {
+    const q = query.trim().toLowerCase();
+    const seen = /* @__PURE__ */ new Set();
+    return this.names().filter((name) => {
+      if (name === "" || seen.has(name))
+        return false;
+      seen.add(name);
+      return q === "" || name.toLowerCase().includes(q);
+    });
+  }
+  renderSuggestion(name, el) {
+    el.setText(name);
+  }
+  selectSuggestion(name) {
+    var _a;
+    this.textInputEl.value = name;
+    this.textInputEl.dispatchEvent(new Event("input"));
+    (_a = this.onPick) == null ? void 0 : _a.call(this, name);
+    this.close();
+  }
+};
+
+// src/plan/PlanModal.ts
+var PlanModal = class extends import_obsidian6.Modal {
+  constructor(app, groups, items, ctx, onSave) {
     super(app);
+    /** 折りたたみ中のグループID(モーダルを開いている間だけ保持) */
+    this.collapsed = /* @__PURE__ */ new Set();
+    this.lists = /* @__PURE__ */ new Map();
+    this.blocks = /* @__PURE__ */ new Map();
+    this.groups = groups.map((g) => ({ ...g }));
     this.items = items.map((item) => ({ ...item }));
+    this.ctx = ctx;
     this.onSave = onSave;
   }
   onOpen() {
@@ -889,113 +1128,555 @@ var PlanModal = class extends import_obsidian4.Modal {
     contentEl.createEl("h3", { text: "\u4E88\u5B9A\u306E\u7DE8\u96C6" });
     contentEl.createEl("p", {
       cls: "rg-plan-desc",
-      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u30C1\u30E3\u30FC\u30C8\u6700\u4E0A\u6BB5\u306E\u300C\u5168\u4F53\u4E88\u5B9A\u300D\u300C\u500B\u4EBA\u4E88\u5B9A\u300D\u306E\u884C\u306B\u8868\u793A\u3055\u308C\u307E\u3059\u3002"
+      text: "Redmine\u3068\u306F\u72EC\u7ACB\u3057\u305F\u4E88\u5B9A\u3067\u3059\u3002\u30AC\u30F3\u30C8\u6700\u4E0A\u6BB5\u306E\u5E2F\u306B\u30B0\u30EB\u30FC\u30D7\u3054\u3068\u306E\u884C\u3067\u8868\u793A\u3055\u308C\u307E\u3059\u3002\u30AC\u30F3\u30C8\u4E0A\u3067\u3082\u3001\u884C\u306E\u7A7A\u767D\u3092\u30C9\u30E9\u30C3\u30B0\u3057\u3066\u8FFD\u52A0\u3001\u30D0\u30FC\u3092\u30AF\u30EA\u30C3\u30AF\u3057\u3066\u7DE8\u96C6\u3067\u304D\u307E\u3059\u3002"
     });
-    this.renderSection("\u5168\u4F53\u4E88\u5B9A", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5168\u4F53\u306E\u4E88\u5B9A(\u30EA\u30EA\u30FC\u30B9\u30FB\u30A4\u30D9\u30F3\u30C8\u306A\u3069)", "team");
-    this.renderSection("\u500B\u4EBA\u4E88\u5B9A", "\u4F11\u6687\u306A\u3069\u500B\u4EBA\u306E\u4E88\u5B9A\u3002\u62C5\u5F53\u8005\u540D\u3092\u5165\u308C\u308B\u3068\u540C\u3058\u62C5\u5F53\u8005\u306E\u4E88\u5B9A\u304C\u540C\u3058\u884C\u306B\u307E\u3068\u307E\u308A\u307E\u3059", "personal");
-    new import_obsidian4.Setting(contentEl).addButton(
-      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => {
-        this.onSave(this.items.filter((item) => item.name !== ""));
-        this.close();
-      })
+    this.renderSection("team", "\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u5168\u4F53\u306E\u4E88\u5B9A(\u30EA\u30EA\u30FC\u30B9\u30FB\u30A4\u30D9\u30F3\u30C8\u306A\u3069)\u3002\u8272\u306F\u30B0\u30EB\u30FC\u30D7\u3054\u3068\u306B\u8A2D\u5B9A\u3057\u307E\u3059");
+    this.renderSection("personal", "\u4F11\u6687\u306A\u3069\u500B\u4EBA\u306E\u4E88\u5B9A\u3002\u540C\u3058\u62C5\u5F53\u8005\u306E\u4E88\u5B9A\u306F\u30AC\u30F3\u30C8\u306E\u540C\u3058\u884C\u306B\u307E\u3068\u307E\u308A\u307E\u3059");
+    new import_obsidian6.Setting(contentEl).addButton(
+      (button) => button.setButtonText("\u4FDD\u5B58").setCta().onClick(() => this.save())
     ).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.close()));
   }
-  renderSection(title, desc, kind) {
-    var _a;
+  renderSection(kind, desc) {
     const { contentEl } = this;
-    const list = this.items.filter((item) => {
-      var _a2;
-      return ((_a2 = item.kind) != null ? _a2 : "team") === kind;
-    }).sort((a, b) => {
-      if (!a.start && !b.start)
-        return a.name.localeCompare(b.name, "ja");
-      if (!a.start)
-        return 1;
-      if (!b.start)
-        return -1;
-      return a.start.localeCompare(b.start);
-    });
-    new import_obsidian4.Setting(contentEl).setName(`${title}(${list.length}\u4EF6)`).setHeading().setDesc(desc).addButton(
-      (button) => button.setButtonText("\u8FFD\u52A0").onClick(() => {
-        this.items.push({
-          id: `plan-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
-          name: "",
-          start: "",
-          end: "",
-          color: "",
-          kind,
-          owner: ""
-        });
-        this.render();
-      })
+    new import_obsidian6.Setting(contentEl).setName(planKindLabel(kind)).setHeading().setDesc(desc).addButton(
+      (button) => button.setButtonText(`\uFF0B ${groupNoun(kind)}`).onClick(() => this.addGroup(kind))
     );
-    if (list.length === 0) {
-      contentEl.createDiv({ cls: "rg-plan-empty", text: "\u4E88\u5B9A\u306F\u3042\u308A\u307E\u305B\u3093\u3002" });
+    const list = contentEl.createDiv({ cls: "rg-plan-group-list" });
+    this.lists.set(kind, list);
+    this.renderList(kind);
+  }
+  /** 種別ごとのグループ一覧を作り直す(追加・削除・並び替えのとき) */
+  renderList(kind) {
+    const list = this.lists.get(kind);
+    if (!list)
+      return;
+    list.empty();
+    const groups = this.groups.filter((g) => g.kind === kind);
+    if (groups.length === 0) {
+      list.createDiv({
+        cls: "rg-plan-empty",
+        text: `${groupNoun(kind)}\u304C\u3042\u308A\u307E\u305B\u3093\u3002\u300C\uFF0B ${groupNoun(kind)}\u300D\u3067\u8FFD\u52A0\u3057\u3066\u304F\u3060\u3055\u3044\u3002`
+      });
       return;
     }
-    for (const item of list) {
-      const setting = new import_obsidian4.Setting(contentEl);
-      setting.settingEl.addClass("rg-plan-setting");
-      setting.addText((text) => {
-        text.setPlaceholder("\u4E88\u5B9A\u540D").setValue(item.name).onChange((value) => {
-          item.name = value.trim();
-        });
-        text.inputEl.addClass("rg-plan-name-input");
-      });
-      if (kind === "personal") {
-        setting.addText((text) => {
-          var _a2;
-          text.setPlaceholder("\u62C5\u5F53\u8005\u540D").setValue((_a2 = item.owner) != null ? _a2 : "").onChange((value) => {
-            item.owner = value.trim();
-          });
-          text.inputEl.addClass("rg-plan-owner-input");
-        });
-      }
-      setting.addText((text) => {
-        text.inputEl.type = "date";
-        text.setValue(item.start).onChange((value) => {
-          item.start = value;
-        });
-      }).addText((text) => {
-        text.inputEl.type = "date";
-        text.setValue(item.end).onChange((value) => {
-          item.end = value;
-        });
-      });
-      const swatches = setting.controlEl.createDiv({ cls: "rg-plan-swatches" });
-      for (const color of PLAN_PRESET_COLORS) {
-        const swatch = swatches.createEl("button", { cls: "rg-plan-swatch" });
-        swatch.style.backgroundColor = color;
-        if (((_a = item.color) != null ? _a : "").toLowerCase() === color)
-          swatch.addClass("is-selected");
-        swatch.setAttr("aria-label", `\u8272: ${color}`);
-        swatch.addEventListener("click", (e) => {
-          e.preventDefault();
-          item.color = color;
-          this.render();
-        });
-      }
-      setting.addColorPicker((picker) => {
-        picker.setValue(item.color || "#808080").onChange((value) => {
-          item.color = value;
-        });
-      }).addExtraButton(
-        (button) => button.setIcon("rotate-ccw").setTooltip("\u8272\u3092\u65E2\u5B9A\u306B\u623B\u3059").onClick(() => {
-          item.color = "";
-          this.render();
-        })
-      ).addExtraButton(
-        (button) => button.setIcon("trash").setTooltip("\u524A\u9664").onClick(() => {
-          const index = this.items.indexOf(item);
-          if (index >= 0)
-            this.items.splice(index, 1);
-          this.render();
-        })
-      );
+    for (const group of groups)
+      list.appendChild(this.buildBlock(group));
+  }
+  /** グループ1つ分(見出し+予定行)を作り直して差し替える。他のグループの入力状態には触れない */
+  refreshBlock(group, focusKey) {
+    var _a, _b;
+    const old = this.blocks.get(group.id);
+    const fresh = this.buildBlock(group);
+    if (old && old.isConnected) {
+      old.replaceWith(fresh);
+    } else {
+      (_a = this.lists.get(group.kind)) == null ? void 0 : _a.appendChild(fresh);
     }
+    if (focusKey) {
+      (_b = fresh.querySelector(`[data-focus="${focusKey}"]`)) == null ? void 0 : _b.focus();
+    }
+  }
+  buildBlock(group) {
+    const block = createDiv({ cls: "rg-plan-group" });
+    this.blocks.set(group.id, block);
+    const isCollapsed = this.collapsed.has(group.id);
+    const head = block.createDiv({ cls: "rg-plan-group-head" });
+    const body = block.createDiv({ cls: "rg-plan-group-body" });
+    body.toggleClass("is-collapsed", isCollapsed);
+    const chevron = head.createEl("button", { cls: "clickable-icon rg-plan-chevron" });
+    (0, import_obsidian6.setIcon)(chevron, isCollapsed ? "chevron-right" : "chevron-down");
+    chevron.setAttr("aria-label", "\u6298\u308A\u305F\u305F\u307F");
+    chevron.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (this.collapsed.has(group.id))
+        this.collapsed.delete(group.id);
+      else
+        this.collapsed.add(group.id);
+      const now = this.collapsed.has(group.id);
+      (0, import_obsidian6.setIcon)(chevron, now ? "chevron-right" : "chevron-down");
+      body.toggleClass("is-collapsed", now);
+    });
+    const colorBtn = head.createEl("button", { cls: "clickable-icon rg-plan-group-color" });
+    colorBtn.setAttr("aria-label", `${groupNoun(group.kind)}\u306E\u8272: ${group.color}`);
+    const dot = colorBtn.createSpan({ cls: "rg-plan-dot rg-plan-dot-lg" });
+    dot.style.backgroundColor = group.color;
+    colorBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      buildColorMenu(group.color, (color) => {
+        group.color = color;
+        this.refreshBlock(group);
+      }).showAtMouseEvent(e);
+    });
+    const nameInput = head.createEl("input", {
+      type: "text",
+      cls: "rg-plan-group-name",
+      placeholder: group.kind === "personal" ? "\u62C5\u5F53\u8005\u540D" : "\u30B0\u30EB\u30FC\u30D7\u540D"
+    });
+    nameInput.value = group.name;
+    nameInput.setAttr("data-focus", `group-${group.id}`);
+    nameInput.addEventListener("input", () => {
+      group.name = nameInput.value.trim();
+    });
+    if (group.kind === "personal") {
+      new NameSuggest(this.app, nameInput, this.ctx.suggestNames, (name) => {
+        const fixed = this.ctx.assigneeColors.find((c) => c.name !== "" && c.name === name);
+        if (fixed) {
+          group.color = fixed.color;
+          this.refreshBlock(group);
+        }
+      });
+    }
+    const items = this.items.filter((item) => item.groupId === group.id).sort(comparePlanItems);
+    head.createSpan({ cls: "rg-plan-group-count", text: `${items.length}\u4EF6` });
+    head.createSpan({ cls: "rg-plan-group-spacer" });
+    const addBtn = head.createEl("button", { text: "\uFF0B \u4E88\u5B9A" });
+    addBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.addItem(group);
+    });
+    const moreBtn = head.createEl("button", { cls: "clickable-icon rg-plan-more" });
+    (0, import_obsidian6.setIcon)(moreBtn, "more-horizontal");
+    moreBtn.setAttr("aria-label", `${groupNoun(group.kind)}\u306E\u30E1\u30CB\u30E5\u30FC`);
+    moreBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.groupMenu(group, e);
+    });
+    if (items.length === 0) {
+      body.createDiv({
+        cls: "rg-plan-empty",
+        text: "\u4E88\u5B9A\u306F\u3042\u308A\u307E\u305B\u3093\u3002\u300C\uFF0B \u4E88\u5B9A\u300D\u304B\u3001\u30AC\u30F3\u30C8\u306E\u3053\u306E\u884C\u3092\u30C9\u30E9\u30C3\u30B0\u3057\u3066\u8FFD\u52A0\u3067\u304D\u307E\u3059\u3002"
+      });
+    }
+    for (const item of items)
+      body.appendChild(this.buildRow(item, group));
+    return block;
+  }
+  buildRow(item, group) {
+    const row = createDiv({ cls: "rg-plan-item-row" });
+    const nameInput = row.createEl("input", {
+      type: "text",
+      cls: "rg-plan-name-input",
+      placeholder: "\u4E88\u5B9A\u540D"
+    });
+    nameInput.value = item.name;
+    nameInput.setAttr("data-focus", `item-${item.id}`);
+    nameInput.addEventListener("input", () => {
+      item.name = nameInput.value.trim();
+    });
+    const startInput = row.createEl("input", { type: "date" });
+    startInput.value = item.start;
+    row.createSpan({ cls: "rg-plan-tilde", text: "\u301C" });
+    const endInput = row.createEl("input", { type: "date" });
+    endInput.value = item.end;
+    startInput.addEventListener("change", () => {
+      item.start = startInput.value;
+      if (item.start && (item.end === "" || item.end < item.start)) {
+        item.end = item.start;
+        endInput.value = item.end;
+      }
+    });
+    endInput.addEventListener("change", () => {
+      item.end = endInput.value;
+    });
+    const colorBtn = row.createEl("button", { cls: "clickable-icon rg-plan-item-color" });
+    colorBtn.toggleClass("is-override", !!item.color);
+    colorBtn.setAttr(
+      "aria-label",
+      item.color ? `\u8272\u3092\u4E0A\u66F8\u304D\u4E2D(${item.color})\u3002\u30AF\u30EA\u30C3\u30AF\u3067\u5909\u66F4` : "\u8272: \u30B0\u30EB\u30FC\u30D7\u8272\u3002\u30AF\u30EA\u30C3\u30AF\u3067\u4E0A\u66F8\u304D"
+    );
+    const dot = colorBtn.createSpan({ cls: "rg-plan-dot" });
+    dot.style.backgroundColor = item.color || group.color;
+    colorBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.itemMenu(item, group, e);
+    });
+    const del = row.createEl("button", { cls: "clickable-icon rg-plan-delete" });
+    (0, import_obsidian6.setIcon)(del, "trash");
+    del.setAttr("aria-label", "\u524A\u9664");
+    del.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.items.remove(item);
+      this.refreshBlock(group);
+    });
+    return row;
+  }
+  groupMenu(group, e) {
+    const same = this.groups.filter((g) => g.kind === group.kind);
+    const index = same.indexOf(group);
+    const menu = new import_obsidian6.Menu();
+    menu.addItem(
+      (item) => item.setTitle("\u8272\u3092\u5909\u66F4\u2026").setIcon("palette").onClick(
+        () => buildColorMenu(group.color, (color) => {
+          group.color = color;
+          this.refreshBlock(group);
+        }).showAtMouseEvent(e)
+      )
+    );
+    menu.addItem(
+      (item) => item.setTitle("\u4E0A\u3078\u79FB\u52D5").setIcon("arrow-up").setDisabled(index <= 0).onClick(() => this.moveGroup(group, -1))
+    );
+    menu.addItem(
+      (item) => item.setTitle("\u4E0B\u3078\u79FB\u52D5").setIcon("arrow-down").setDisabled(index >= same.length - 1).onClick(() => this.moveGroup(group, 1))
+    );
+    menu.addSeparator();
+    menu.addItem(
+      (item) => item.setTitle(`${groupNoun(group.kind)}\u3092\u524A\u9664(\u4E88\u5B9A\u306F\u300C${UNCATEGORIZED_NAME}\u300D\u3078)`).setIcon("trash").onClick(() => this.deleteGroup(group))
+    );
+    menu.showAtMouseEvent(e);
+  }
+  itemMenu(item, group, e) {
+    var _a;
+    const menu = buildColorMenu(
+      (_a = item.color) != null ? _a : "",
+      (color) => {
+        item.color = color;
+        this.refreshBlock(group);
+      },
+      {
+        reset: {
+          label: "\u30B0\u30EB\u30FC\u30D7\u8272\u306B\u623B\u3059",
+          disabled: !item.color,
+          onReset: () => {
+            item.color = "";
+            this.refreshBlock(group);
+          }
+        },
+        extra: (m) => {
+          const others = this.groups.filter((g) => g.kind === group.kind && g.id !== group.id);
+          if (others.length > 0) {
+            m.addSeparator();
+            for (const other of others) {
+              m.addItem(
+                (mi) => mi.setTitle(`\u300C${other.name || "(\u7121\u984C)"}\u300D\u3078\u79FB\u52D5`).setIcon("corner-down-right").onClick(() => {
+                  item.groupId = other.id;
+                  this.refreshBlock(group);
+                  this.refreshBlock(other);
+                })
+              );
+            }
+          }
+          m.addSeparator();
+          m.addItem(
+            (mi) => mi.setTitle("\u524A\u9664").setIcon("trash").onClick(() => {
+              this.items.remove(item);
+              this.refreshBlock(group);
+            })
+          );
+        }
+      }
+    );
+    menu.showAtMouseEvent(e);
+  }
+  addGroup(kind) {
+    var _a, _b;
+    const group = {
+      id: newPlanId("group"),
+      name: "",
+      color: defaultGroupColor(this.groups, kind, "", this.ctx.assigneeColors),
+      kind
+    };
+    this.groups.push(group);
+    this.renderList(kind);
+    (_b = (_a = this.blocks.get(group.id)) == null ? void 0 : _a.querySelector(`[data-focus="group-${group.id}"]`)) == null ? void 0 : _b.focus();
+  }
+  addItem(group) {
+    const item = {
+      id: newPlanId("plan"),
+      name: "",
+      start: "",
+      end: "",
+      groupId: group.id
+    };
+    this.items.push(item);
+    this.collapsed.delete(group.id);
+    this.refreshBlock(group, `item-${item.id}`);
+  }
+  moveGroup(group, dir) {
+    const same = this.groups.filter((g) => g.kind === group.kind);
+    const index = same.indexOf(group);
+    const target = same[index + dir];
+    if (!target)
+      return;
+    const a = this.groups.indexOf(group);
+    const b = this.groups.indexOf(target);
+    this.groups[a] = target;
+    this.groups[b] = group;
+    this.renderList(group.kind);
+  }
+  /** グループを削除し、所属していた予定は「未分類」へ移す */
+  deleteGroup(group) {
+    this.groups.remove(group);
+    this.blocks.delete(group.id);
+    const owned = this.items.filter((item) => item.groupId === group.id);
+    if (owned.length > 0) {
+      const fallback = ensureUncategorizedGroup(this.groups, group.kind);
+      for (const item of owned)
+        item.groupId = fallback.id;
+    }
+    this.renderList(group.kind);
+  }
+  save() {
+    const groups = this.groups.filter((g) => g.name !== "" || this.items.some((item) => item.groupId === g.id)).map((g) => ({ ...g, name: g.name || UNCATEGORIZED_NAME }));
+    const items = this.items.filter((item) => item.name !== "").sort(comparePlanItems);
+    this.onSave(groups, items);
+    this.close();
   }
   onClose() {
     this.contentEl.empty();
+  }
+};
+
+// src/plan/PlanPopover.ts
+var active = null;
+function closePlanPopover() {
+  active == null ? void 0 : active.dismiss();
+}
+var FloatingPanel = class {
+  constructor(host, anchor, onCancel) {
+    this.host = host;
+    this.anchor = anchor;
+    this.onCancel = onCancel;
+    this.closed = false;
+    this.listening = false;
+    this.onDocMouseDown = (e) => {
+      if (!this.el.contains(e.target))
+        this.dismiss();
+    };
+    this.onDocKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        this.dismiss();
+      }
+    };
+    active == null ? void 0 : active.dismiss();
+    active = this;
+    this.el = host.createDiv({ cls: "rg-plan-popover" });
+    this.el.addEventListener("keydown", (e) => {
+      const tag = e.target.tagName;
+      if (e.key === "Enter" && tag !== "BUTTON" && tag !== "SELECT") {
+        e.preventDefault();
+        this.submit();
+      }
+    });
+    window.setTimeout(() => {
+      if (this.closed)
+        return;
+      document.addEventListener("mousedown", this.onDocMouseDown);
+      document.addEventListener("keydown", this.onDocKeyDown);
+      this.listening = true;
+    }, 0);
+  }
+  /** 内容を組み立てたあとに呼び、アンカーの下(収まらなければ上)に配置する */
+  place() {
+    const hostRect = this.host.getBoundingClientRect();
+    const w = this.el.offsetWidth;
+    const h = this.el.offsetHeight;
+    let left = this.anchor.left - hostRect.left;
+    let top = this.anchor.bottom - hostRect.top + 4;
+    left = Math.max(8, Math.min(left, hostRect.width - w - 8));
+    if (top + h > hostRect.height - 8) {
+      top = Math.max(8, this.anchor.top - hostRect.top - h - 4);
+    }
+    this.el.style.left = `${left}px`;
+    this.el.style.top = `${top}px`;
+  }
+  /** 取り消して閉じる(Esc・外側クリック・キャンセルボタン) */
+  dismiss() {
+    var _a;
+    if (this.closed)
+      return;
+    this.close();
+    (_a = this.onCancel) == null ? void 0 : _a.call(this);
+  }
+  /** 確定後などに閉じる(取り消し処理は呼ばない) */
+  close() {
+    if (this.closed)
+      return;
+    this.closed = true;
+    if (this.listening) {
+      document.removeEventListener("mousedown", this.onDocMouseDown);
+      document.removeEventListener("keydown", this.onDocKeyDown);
+    }
+    this.el.remove();
+    if (active === this)
+      active = null;
+  }
+  field(label) {
+    const row = this.el.createDiv({ cls: "rg-pop-field" });
+    row.createSpan({ cls: "rg-pop-label", text: label });
+    return row.createDiv({ cls: "rg-pop-control" });
+  }
+  actions() {
+    return this.el.createDiv({ cls: "rg-pop-actions" });
+  }
+};
+var PlanPopover = class extends FloatingPanel {
+  constructor(opts) {
+    var _a, _b;
+    super(opts.host, opts.anchor, opts.onCancel);
+    this.opts = opts;
+    this.color = opts.value.color;
+    const group = opts.groups.find((g) => g.id === opts.value.groupId);
+    const head = this.el.createDiv({ cls: "rg-pop-head" });
+    const dot = head.createSpan({ cls: "rg-pop-dot" });
+    dot.style.backgroundColor = (_a = group == null ? void 0 : group.color) != null ? _a : "";
+    head.createSpan({ cls: "rg-pop-title", text: opts.mode === "create" ? "\u4E88\u5B9A\u3092\u8FFD\u52A0" : "\u4E88\u5B9A\u3092\u7DE8\u96C6" });
+    head.createSpan({ cls: "rg-pop-kind", text: planKindLabel(opts.kind) });
+    this.nameInput = this.field("\u4E88\u5B9A\u540D").createEl("input", { type: "text", placeholder: "\u4E88\u5B9A\u540D" });
+    this.nameInput.value = opts.value.name;
+    this.groupSelect = this.field(groupNoun(opts.kind)).createEl("select", { cls: "dropdown" });
+    for (const g of opts.groups) {
+      const option = this.groupSelect.createEl("option", { text: g.name || "(\u7121\u984C)" });
+      option.value = g.id;
+    }
+    this.groupSelect.value = opts.value.groupId;
+    this.groupSelect.addEventListener("change", () => {
+      var _a2;
+      const selected = opts.groups.find((g) => g.id === this.groupSelect.value);
+      dot.style.backgroundColor = (_a2 = selected == null ? void 0 : selected.color) != null ? _a2 : "";
+    });
+    const dates = this.field("\u671F\u9593").createDiv({ cls: "rg-pop-dates" });
+    this.startInput = dates.createEl("input", { type: "date" });
+    this.startInput.value = opts.value.start;
+    dates.createSpan({ cls: "rg-pop-tilde", text: "\u301C" });
+    this.endInput = dates.createEl("input", { type: "date" });
+    this.endInput.value = opts.value.end;
+    this.startInput.addEventListener("change", () => {
+      if (this.endInput.value === "" || this.endInput.value < this.startInput.value) {
+        this.endInput.value = this.startInput.value;
+      }
+    });
+    buildSwatches(
+      this.field("\u8272"),
+      this.color,
+      (color) => {
+        this.color = color;
+      },
+      { groupColor: (_b = group == null ? void 0 : group.color) != null ? _b : "" }
+    );
+    const actions = this.actions();
+    if (opts.mode === "edit" && opts.onDelete) {
+      const del = actions.createEl("button", { cls: "rg-pop-danger", text: "\u524A\u9664" });
+      del.addEventListener("click", () => {
+        var _a2;
+        this.close();
+        (_a2 = opts.onDelete) == null ? void 0 : _a2.call(opts);
+      });
+    }
+    actions.createSpan({ cls: "rg-pop-spacer" });
+    const cancel = actions.createEl("button", { text: "\u30AD\u30E3\u30F3\u30BB\u30EB" });
+    cancel.addEventListener("click", () => this.dismiss());
+    const ok = actions.createEl("button", { cls: "mod-cta", text: opts.mode === "create" ? "\u8FFD\u52A0" : "\u4FDD\u5B58" });
+    ok.addEventListener("click", () => this.submit());
+    this.el.createDiv({
+      cls: "rg-pop-hint",
+      text: "Enter \u3067\u78BA\u5B9A\u3001Esc \u3067\u53D6\u308A\u6D88\u3057"
+    });
+    this.place();
+    this.nameInput.focus();
+    if (opts.mode === "edit")
+      this.nameInput.select();
+  }
+  submit() {
+    const name = this.nameInput.value.trim();
+    if (name === "") {
+      this.nameInput.addClass("is-invalid");
+      this.nameInput.focus();
+      return;
+    }
+    let start = this.startInput.value;
+    let end = this.endInput.value;
+    if (start && end && start > end)
+      [start, end] = [end, start];
+    if (start && !end)
+      end = start;
+    if (!start && end)
+      start = end;
+    const value = {
+      name,
+      groupId: this.groupSelect.value || this.opts.value.groupId,
+      start,
+      end,
+      color: this.color
+    };
+    this.close();
+    this.opts.onSubmit(value);
+  }
+};
+var GroupPopover = class extends FloatingPanel {
+  constructor(opts) {
+    super(opts.host, opts.anchor, opts.onCancel);
+    this.opts = opts;
+    this.color = opts.value.color;
+    const noun = groupNoun(opts.kind);
+    const head = this.el.createDiv({ cls: "rg-pop-head" });
+    const dot = head.createSpan({ cls: "rg-pop-dot" });
+    dot.style.backgroundColor = this.color;
+    head.createSpan({
+      cls: "rg-pop-title",
+      text: opts.mode === "create" ? `${noun}\u3092\u8FFD\u52A0` : `${noun}\u306E\u8A2D\u5B9A`
+    });
+    head.createSpan({ cls: "rg-pop-kind", text: planKindLabel(opts.kind) });
+    this.nameInput = this.field(opts.kind === "personal" ? "\u62C5\u5F53\u8005" : "\u540D\u524D").createEl("input", {
+      type: "text",
+      placeholder: opts.kind === "personal" ? "\u62C5\u5F53\u8005\u540D" : "\u4F8B: \u30EA\u30EA\u30FC\u30B9\u3001ICG"
+    });
+    this.nameInput.value = opts.value.name;
+    const selectSwatch = buildSwatches(
+      this.field("\u8272"),
+      this.color,
+      (color) => {
+        this.color = color;
+        dot.style.backgroundColor = color;
+      },
+      { custom: true }
+    );
+    if (opts.kind === "personal") {
+      new NameSuggest(opts.app, this.nameInput, opts.suggestNames, (name) => {
+        var _a;
+        const fixed = (_a = opts.fixedColorFor) == null ? void 0 : _a.call(opts, name);
+        if (fixed) {
+          this.color = fixed;
+          dot.style.backgroundColor = fixed;
+          selectSwatch(fixed);
+        }
+      });
+    }
+    const actions = this.actions();
+    if (opts.mode === "edit" && opts.onDelete) {
+      const del = actions.createEl("button", { cls: "rg-pop-danger", text: "\u524A\u9664" });
+      del.setAttr("title", `${noun}\u3092\u524A\u9664\u3057\u3001\u4E88\u5B9A\u306F\u300C\u672A\u5206\u985E\u300D\u3078\u79FB\u3057\u307E\u3059`);
+      del.addEventListener("click", () => {
+        var _a;
+        this.close();
+        (_a = opts.onDelete) == null ? void 0 : _a.call(opts);
+      });
+    }
+    actions.createSpan({ cls: "rg-pop-spacer" });
+    const cancel = actions.createEl("button", { text: "\u30AD\u30E3\u30F3\u30BB\u30EB" });
+    cancel.addEventListener("click", () => this.dismiss());
+    const ok = actions.createEl("button", { cls: "mod-cta", text: opts.mode === "create" ? "\u8FFD\u52A0" : "\u4FDD\u5B58" });
+    ok.addEventListener("click", () => this.submit());
+    if (opts.mode === "create") {
+      this.el.createDiv({
+        cls: "rg-pop-hint",
+        text: opts.kind === "personal" ? "\u540C\u3058\u62C5\u5F53\u8005\u306E\u4E88\u5B9A\u306F\u30AC\u30F3\u30C8\u306E\u540C\u3058\u884C\u306B\u307E\u3068\u307E\u308A\u307E\u3059" : "\u8FFD\u52A0\u3057\u305F\u884C\u306E\u7A7A\u767D\u3092\u30C9\u30E9\u30C3\u30B0\u3059\u308B\u3068\u4E88\u5B9A\u3092\u4F5C\u308C\u307E\u3059"
+      });
+    }
+    this.place();
+    this.nameInput.focus();
+    if (opts.mode === "edit")
+      this.nameInput.select();
+  }
+  submit() {
+    const name = this.nameInput.value.trim();
+    if (name === "") {
+      this.nameInput.addClass("is-invalid");
+      this.nameInput.focus();
+      return;
+    }
+    this.close();
+    this.opts.onSubmit({ name, color: this.color });
   }
 };
 
@@ -1226,10 +1907,13 @@ function clipSpan(start, end, range) {
     e: end > range.end ? range.end : end
   };
 }
-function renderGantt(container, model, plans, scale, range, opts) {
-  var _a, _b, _c, _d;
+function formatMonthDay(d) {
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+function renderGantt(container, model, plans, groups, scale, range, opts) {
+  var _a, _b;
   container.empty();
-  if (model.tasks.length === 0 && plans.length === 0) {
+  if (model.tasks.length === 0 && plans.length === 0 && groups.length === 0) {
     container.createDiv({ cls: "rg-empty", text: "\u8868\u793A\u3067\u304D\u308B\u30C1\u30B1\u30C3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093\u3002" });
     return;
   }
@@ -1252,45 +1936,34 @@ function renderGantt(container, model, plans, scale, range, opts) {
       } else {
         laneEnds[index] = effectiveEnd;
       }
-      lane.set(plan, index);
+      lane.set(plan.id, index);
     }
     return { lane, count: laneEnds.length };
   };
-  const teamPlans = datedPlans.filter((p) => p.kind !== "personal");
-  const personalPlans = datedPlans.filter((p) => p.kind === "personal");
-  const teamPack = packLanes(teamPlans);
-  const personalLaneLabels = [];
-  const personalLaneOf = /* @__PURE__ */ new Map();
-  {
-    const byOwner = /* @__PURE__ */ new Map();
-    for (const plan of personalPlans) {
-      const key2 = ((_a = plan.owner) != null ? _a : "").trim();
-      const list = (_b = byOwner.get(key2)) != null ? _b : [];
-      list.push(plan);
-      byOwner.set(key2, list);
-    }
-    const owners = Array.from(byOwner.keys()).sort((a, b) => {
-      if (a === "")
-        return 1;
-      if (b === "")
-        return -1;
-      return a.localeCompare(b, "ja");
-    });
-    for (const owner of owners) {
-      const base = personalLaneLabels.length;
-      personalLaneLabels.push(owner || "\u500B\u4EBA\u4E88\u5B9A");
-      for (const plan of (_c = byOwner.get(owner)) != null ? _c : []) {
-        personalLaneOf.set(plan, base);
-      }
+  const blocks = [];
+  let blockTop = HEADER_HEIGHT;
+  for (const kind of ["team", "personal"]) {
+    for (const group of groups.filter((g) => g.kind === kind)) {
+      const list = datedPlans.filter((p) => p.groupId === group.id);
+      const pack = kind === "personal" ? { lane: new Map(list.map((p) => [p.id, 0])), count: list.length > 0 ? 1 : 0 } : packLanes(list);
+      const lanes = Math.max(1, pack.count);
+      blocks.push({
+        group,
+        top: blockTop,
+        lanes,
+        laneOf: pack.lane,
+        plans: list,
+        hasAnyPlan: plans.some((p) => p.groupId === group.id)
+      });
+      blockTop += lanes * rowHeight;
     }
   }
-  const personalLaneCount = personalLaneLabels.length;
-  const planLaneCount = teamPack.count + personalLaneCount;
-  const teamTop = HEADER_HEIGHT;
-  const personalTop = teamTop + teamPack.count * rowHeight;
+  const planLaneCount = Math.round((blockTop - HEADER_HEIGHT) / rowHeight);
+  const firstPersonal = blocks.find((b) => b.group.kind === "personal");
+  const kindSeparatorY = firstPersonal && blocks.some((b) => b.group.kind === "team") ? firstPersonal.top : null;
   const topHeight = HEADER_HEIGHT + planLaneCount * rowHeight;
   const tasksHeight = model.tasks.length * rowHeight;
-  const leftWidth = (_d = opts.leftWidth) != null ? _d : DEFAULT_LEFT_WIDTH;
+  const leftWidth = (_a = opts.leftWidth) != null ? _a : DEFAULT_LEFT_WIDTH;
   let ticks = computeTicks(range, scale);
   if (opts.dayDetail) {
     ticks = { major: [], minor: [], gridX: [] };
@@ -1344,17 +2017,20 @@ function renderGantt(container, model, plans, scale, range, opts) {
   const leftHeader = leftTop.createDiv({ cls: "rg-left-header" });
   leftHeader.style.height = `${HEADER_HEIGHT}px`;
   leftHeader.setText("\u30C1\u30B1\u30C3\u30C8");
-  if (teamPack.count > 0) {
-    const planLabel = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label" });
-    planLabel.style.height = `${teamPack.count * rowHeight}px`;
-    planLabel.style.paddingLeft = "8px";
-    planLabel.setText("\u5168\u4F53\u4E88\u5B9A");
-  }
-  for (const label of personalLaneLabels) {
-    const laneRow = leftTop.createDiv({ cls: "rg-left-row rg-plan-row rg-plan-label rg-plan-owner-row" });
-    laneRow.style.height = `${rowHeight}px`;
-    laneRow.style.paddingLeft = "8px";
-    laneRow.setText(label);
+  for (const block of blocks) {
+    const row = leftTop.createDiv({
+      cls: `rg-left-row rg-plan-row rg-plan-group-row rg-plan-group-${block.group.kind}`
+    });
+    row.style.height = `${block.lanes * rowHeight}px`;
+    const dot = row.createSpan({ cls: "rg-plan-group-dot" });
+    dot.style.backgroundColor = block.group.color;
+    row.createSpan({ cls: "rg-plan-group-name", text: block.group.name });
+    if (opts.plan) {
+      const plan = opts.plan;
+      row.addClass("is-clickable");
+      row.setAttr("title", `${block.group.name}: \u30AF\u30EA\u30C3\u30AF\u3067${groupNoun(block.group.kind)}\u306E\u8A2D\u5B9A`);
+      row.addEventListener("click", () => plan.onGroupOpen(block.group.id, row.getBoundingClientRect()));
+    }
   }
   const chartTop = stickyTop.createDiv({ cls: "rg-chart" });
   const topSvg = svg("svg", {
@@ -1381,7 +2057,7 @@ function renderGantt(container, model, plans, scale, range, opts) {
   }
   for (let i = 0; i <= planLaneCount; i++) {
     const y = HEADER_HEIGHT + i * rowHeight;
-    const isSeparator = i === planLaneCount || teamPack.count > 0 && personalLaneCount > 0 && i === teamPack.count;
+    const isSeparator = i === planLaneCount || y === kindSeparatorY;
     topSvg.appendChild(
       svg("line", {
         x1: 0,
@@ -1391,6 +2067,32 @@ function renderGantt(container, model, plans, scale, range, opts) {
         class: isSeparator ? "rg-separator" : "rg-grid"
       })
     );
+  }
+  for (const block of blocks) {
+    const lane = svg("rect", {
+      x: 0,
+      y: block.top,
+      width: chartWidth,
+      height: block.lanes * rowHeight,
+      class: `rg-plan-lane rg-plan-lane-${block.group.kind}${opts.plan ? " is-editable" : ""}`,
+      "data-plan-group": block.group.id
+    });
+    if (opts.plan) {
+      const title = svg("title");
+      title.textContent = `${block.group.name}: \u30C9\u30E9\u30C3\u30B0\u3067\u4E88\u5B9A\u3092\u8FFD\u52A0\u3001\u53F3\u30AF\u30EA\u30C3\u30AF\u3067\u30E1\u30CB\u30E5\u30FC`;
+      lane.appendChild(title);
+    }
+    topSvg.appendChild(lane);
+    if (opts.plan && !block.hasAnyPlan) {
+      const hint = svg("text", {
+        x: 6,
+        y: block.top + Math.round(rowHeight / 2 + opts.fontSize * 0.35),
+        "font-size": opts.fontSize,
+        class: "rg-plan-hint"
+      });
+      hint.textContent = "\u30C9\u30E9\u30C3\u30B0\u3067\u4E88\u5B9A\u3092\u8FFD\u52A0";
+      topSvg.appendChild(hint);
+    }
   }
   if (opts.dayDetail) {
     for (let i = 0; i <= range.days; i++) {
@@ -1438,17 +2140,19 @@ function renderGantt(container, model, plans, scale, range, opts) {
       topSvg.appendChild(t);
     }
   }
-  const drawPlans = (list, laneOf, top) => {
-    var _a2;
-    for (const plan of list) {
-      const lane = (_a2 = laneOf.get(plan)) != null ? _a2 : 0;
-      const y = top + lane * rowHeight + barPadding;
+  for (const block of blocks) {
+    for (const plan of block.plans) {
+      const lane = (_b = block.laneOf.get(plan.id)) != null ? _b : 0;
+      const y = block.top + lane * rowHeight + barPadding;
       const h = rowHeight - barPadding * 2;
       const textBaseline = y + Math.round(h / 2 + opts.fontSize * 0.35);
       const kindClass = plan.kind === "personal" ? " rg-plan-personal" : "";
-      const group = svg("g", {});
+      const group = svg("g", {
+        class: `rg-plan-item${opts.plan ? " is-editable" : ""}`,
+        "data-plan-id": plan.id
+      });
       const title = svg("title");
-      title.textContent = planTooltip(plan);
+      title.textContent = planTooltip(plan, block.group.name);
       group.appendChild(title);
       if (diffDays(plan.start, plan.end) === 0) {
         if (plan.start < range.start || plan.start > range.end)
@@ -1517,13 +2221,121 @@ function renderGantt(container, model, plans, scale, range, opts) {
       }
       topSvg.appendChild(group);
     }
-  };
-  drawPlans(teamPlans, teamPack.lane, teamTop);
-  drawPlans(personalPlans, personalLaneOf, personalTop);
+  }
   if (todayX !== null) {
     topSvg.appendChild(
       svg("line", { x1: todayX, y1: 0, x2: todayX, y2: topHeight, class: "rg-today" })
     );
+  }
+  if (opts.plan) {
+    const plan = opts.plan;
+    const blockOf = (groupId) => blocks.find((b) => b.group.id === groupId);
+    const dayIndexAt = (e) => {
+      const rect = topSvg.getBoundingClientRect();
+      return Math.max(0, Math.min(range.days, Math.floor((e.clientX - rect.left) / ppd)));
+    };
+    topSvg.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-plan-id]");
+      if (!item)
+        return;
+      const planId = item.getAttribute("data-plan-id");
+      if (planId)
+        plan.onOpen(planId, item.getBoundingClientRect());
+    });
+    topSvg.addEventListener("contextmenu", (e) => {
+      const target = e.target;
+      const item = target.closest("[data-plan-id]");
+      if (item) {
+        const planId = item.getAttribute("data-plan-id");
+        if (!planId)
+          return;
+        e.preventDefault();
+        plan.onContextMenu(e, { type: "plan", planId });
+        return;
+      }
+      const lane = target.closest("[data-plan-group]");
+      if (!lane)
+        return;
+      const groupId = lane.getAttribute("data-plan-group");
+      if (!groupId)
+        return;
+      e.preventDefault();
+      plan.onContextMenu(e, { type: "lane", groupId, date: addDays(range.start, dayIndexAt(e)) });
+    });
+    topSvg.addEventListener("mousedown", (e) => {
+      if (e.button !== 0)
+        return;
+      const target = e.target;
+      if (target.closest("[data-plan-id]"))
+        return;
+      const lane = target.closest("[data-plan-group]");
+      if (!lane)
+        return;
+      const groupId = lane.getAttribute("data-plan-group");
+      const block = groupId ? blockOf(groupId) : void 0;
+      if (!groupId || !block)
+        return;
+      e.preventDefault();
+      const startIndex = dayIndexAt(e);
+      let currentIndex = startIndex;
+      const ghostY = block.top + (block.lanes - 1) * rowHeight + barPadding;
+      const ghostH = rowHeight - barPadding * 2;
+      const ghost = svg("rect", { y: ghostY, height: ghostH, rx: 3, class: "rg-plan-ghost" });
+      const ghostLabel = svg("text", {
+        y: ghostY + Math.round(ghostH / 2 + opts.fontSize * 0.35),
+        "font-size": opts.fontSize,
+        class: "rg-plan-ghost-label"
+      });
+      topSvg.appendChild(ghost);
+      topSvg.appendChild(ghostLabel);
+      const removeGhost = () => {
+        ghost.remove();
+        ghostLabel.remove();
+      };
+      const update = () => {
+        const s = Math.min(startIndex, currentIndex);
+        const en = Math.max(startIndex, currentIndex);
+        ghost.setAttribute("x", String(s * ppd));
+        ghost.setAttribute("width", String((en - s + 1) * ppd));
+        ghostLabel.setAttribute("x", String((en + 1) * ppd + 4));
+        const from = addDays(range.start, s);
+        const to = addDays(range.start, en);
+        ghostLabel.textContent = en === s ? `${formatMonthDay(from)} \xB7 1\u65E5` : `${formatMonthDay(from)} \u301C ${formatMonthDay(to)} \xB7 ${en - s + 1}\u65E5`;
+      };
+      update();
+      const detach = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("keydown", onKey);
+        document.body.removeClass("rg-plan-dragging");
+      };
+      const onMove = (ev) => {
+        currentIndex = dayIndexAt(ev);
+        update();
+      };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") {
+          detach();
+          removeGhost();
+        }
+      };
+      const onUp = () => {
+        detach();
+        const s = Math.min(startIndex, currentIndex);
+        const en = Math.max(startIndex, currentIndex);
+        plan.onCreate({
+          groupId,
+          start: addDays(range.start, s),
+          end: addDays(range.start, en),
+          anchor: ghost.getBoundingClientRect(),
+          cancel: removeGhost
+        });
+      };
+      document.body.addClass("rg-plan-dragging");
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.addEventListener("keydown", onKey);
+    });
   }
   const body = container.createDiv({ cls: "rg-body" });
   const left = body.createDiv({ cls: "rg-left" });
@@ -1673,19 +2485,17 @@ function taskTooltip(task) {
     lines.push("(\u7D5E\u308A\u8FBC\u307F\u6761\u4EF6\u5916\u306E\u89AA\u3002\u30C4\u30EA\u30FC\u8868\u793A\u306E\u305F\u3081\u53C2\u8003\u8868\u793A)");
   return lines.join("\n");
 }
-function planTooltip(plan) {
-  const lines = [
+function planTooltip(plan, groupName) {
+  return [
     plan.name,
     `\u671F\u9593: ${formatDate(plan.start)} \u301C ${formatDate(plan.end)}`,
-    plan.kind === "personal" ? "\u500B\u4EBA\u4E88\u5B9A" : "\u5168\u4F53\u4E88\u5B9A"
-  ];
-  if (plan.kind === "personal" && plan.owner)
-    lines.push(`\u62C5\u5F53: ${plan.owner}`);
-  return lines.join("\n");
+    plan.kind === "personal" ? `\u62C5\u5F53: ${groupName}` : `\u5168\u4F53\u4E88\u5B9A / ${groupName}`,
+    "\u30AF\u30EA\u30C3\u30AF\u3067\u7DE8\u96C6"
+  ].join("\n");
 }
 
 // src/gantt/table.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var INDENT2 = 16;
 var MIN_COL_WIDTH = 48;
 var COLUMNS = [
@@ -1808,7 +2618,7 @@ function renderRow(tbody, task, opts) {
     row.addClass("rg-row-context");
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    const menu = new import_obsidian5.Menu();
+    const menu = new import_obsidian7.Menu();
     menu.addItem(
       (item) => item.setTitle("\u30C1\u30B1\u30C3\u30C8\u5185\u5BB9\u3092\u30B3\u30D4\u30FC").setIcon("copy").onClick(async () => {
         const due = task.due && !task.dueIsFallback ? formatDate(task.due) : "-";
@@ -1821,7 +2631,7 @@ function renderRow(tbody, task, opts) {
           opts.issueUrl(task.id)
         ].join("\n");
         await navigator.clipboard.writeText(text);
-        new import_obsidian5.Notice(`#${task.id} \u3092\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F`);
+        new import_obsidian7.Notice(`#${task.id} \u3092\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F`);
       })
     );
     if (opts.onOpenInPane) {
@@ -1897,7 +2707,7 @@ function renderRow(tbody, task, opts) {
     btn.style.height = "auto";
     btn.style.minHeight = "0";
     btn.style.lineHeight = "0";
-    (0, import_obsidian5.setIcon)(btn, "pencil");
+    (0, import_obsidian7.setIcon)(btn, "pencil");
     btn.setAttr("aria-label", `#${task.id} \u3092\u7DE8\u96C6`);
     btn.addEventListener("click", () => opts.onEdit(task.id));
   }
@@ -1917,13 +2727,10 @@ var ASSIGNEE_PALETTE = [
 ];
 var NO_ASSIGNEE = "";
 var NO_ASSIGNEE_LABEL = "(\u62C5\u5F53\u8005\u306A\u3057)";
-function parsePlanDate(s) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s))
-    return null;
-  const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, m - 1, d);
+function rectAtMouse(e) {
+  return new DOMRect(e.clientX, e.clientY, 0, 0);
 }
-var GanttView = class extends import_obsidian6.ItemView {
+var GanttView = class extends import_obsidian8.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.rawIssues = null;
@@ -1948,6 +2755,8 @@ var GanttView = class extends import_obsidian6.ItemView {
     this.tableSituationFilter = "all";
     this.tableGroupBy = "none";
     this.rangeMonths = 2;
+    /** ガント上での予定操作を1回分だけ取り消すためのスナップショット */
+    this.planUndo = null;
     this.plugin = plugin;
     this.scale = plugin.settings.defaultScale;
     const now = /* @__PURE__ */ new Date();
@@ -1969,7 +2778,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     container.addClass("rg-view");
     const toolbar = container.createDiv({ cls: "rg-toolbar" });
     const refreshBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian6.setIcon)(refreshBtn, "refresh-cw");
+    (0, import_obsidian8.setIcon)(refreshBtn, "refresh-cw");
     refreshBtn.setAttr("aria-label", "\u518D\u53D6\u5F97");
     refreshBtn.addEventListener("click", () => void this.refresh());
     const modeSelect = toolbar.createEl("select", { cls: "dropdown rg-mode-select" });
@@ -2026,7 +2835,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     });
     this.rangeControls = toolbar.createDiv({ cls: "rg-range" });
     const prevBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian6.setIcon)(prevBtn, "chevron-left");
+    (0, import_obsidian8.setIcon)(prevBtn, "chevron-left");
     prevBtn.setAttr("aria-label", "\u524D\u6708\u3078");
     prevBtn.addEventListener("click", () => this.shiftRange(-1));
     this.monthInput = this.rangeControls.createEl("input", {
@@ -2043,7 +2852,7 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.renderView();
     });
     const nextBtn = this.rangeControls.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian6.setIcon)(nextBtn, "chevron-right");
+    (0, import_obsidian8.setIcon)(nextBtn, "chevron-right");
     nextBtn.setAttr("aria-label", "\u6B21\u6708\u3078");
     nextBtn.addEventListener("click", () => this.shiftRange(1));
     const monthsSelect = this.rangeControls.createEl("select", { cls: "dropdown" });
@@ -2105,12 +2914,12 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.renderView();
     });
     this.assigneeBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian6.setIcon)(this.assigneeBtn, "users");
+    (0, import_obsidian8.setIcon)(this.assigneeBtn, "users");
     this.assigneeBtn.setAttr("aria-label", "\u62C5\u5F53\u8005\u3067\u7D5E\u308A\u8FBC\u307F");
     this.assigneeBtn.addEventListener("click", () => this.toggleAssigneePanel());
     const planBtn = toolbar.createEl("button", { cls: "rg-toolbar-btn" });
-    (0, import_obsidian6.setIcon)(planBtn, "calendar-range");
-    planBtn.setAttr("aria-label", "\u5168\u4F53\u4E88\u5B9A\u3092\u7DE8\u96C6");
+    (0, import_obsidian8.setIcon)(planBtn, "calendar-range");
+    planBtn.setAttr("aria-label", "\u4E88\u5B9A\u306E\u4E00\u89A7\u3092\u7DE8\u96C6");
     planBtn.addEventListener("click", () => this.openPlanModal());
     this.statusEl = toolbar.createDiv({ cls: "rg-status" });
     this.assigneePanel = toolbar.createDiv({ cls: "rg-assignee-panel" });
@@ -2125,6 +2934,7 @@ var GanttView = class extends import_obsidian6.ItemView {
     this.legendEl = container.createDiv({ cls: "rg-plan-legend" });
     this.legendEl.hide();
     this.chartEl = container.createDiv({ cls: "rg-chart-container" });
+    this.chartEl.addEventListener("scroll", () => closePlanPopover());
     this.updateScaleVisibility();
     await this.refresh();
   }
@@ -2189,7 +2999,7 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.setStatus("\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F");
       this.chartEl.empty();
       this.chartEl.createDiv({ cls: "rg-error", text: message });
-      new import_obsidian6.Notice(`Redmine Gantt: ${message}`);
+      new import_obsidian8.Notice(`Redmine Gantt: ${message}`);
     } finally {
       this.loading = false;
     }
@@ -2318,10 +3128,40 @@ var GanttView = class extends import_obsidian6.ItemView {
       this.renderView();
     });
   }
-  /** 全体予定を表示用に変換する(開始日順、日付なしは末尾) */
+  // ---- 予定(全体予定・個人予定) ----
+  planGroupById(id) {
+    return this.plugin.settings.planGroups.find((g) => g.id === id);
+  }
+  planGroupsOfKind(kind) {
+    return this.plugin.settings.planGroups.filter((g) => g.kind === kind);
+  }
+  /** 個人予定の担当者名のサジェスト候補(設定+取得済みチケットの担当者) */
+  planSuggestNames() {
+    var _a, _b;
+    const names = new Set(this.plugin.planSuggestNames());
+    for (const issue of (_a = this.rawIssues) != null ? _a : []) {
+      if ((_b = issue.assigned_to) == null ? void 0 : _b.name)
+        names.add(issue.assigned_to.name);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "ja"));
+  }
+  /** 表示するグループ(非表示を除く)と、その予定を表示用に変換する */
   planRows() {
-    const rows = this.plugin.settings.planItems.map((item) => {
-      var _a, _b, _c;
+    var _a;
+    const settings = this.plugin.settings;
+    const visibleGroups = settings.planGroups.filter((g) => !g.hidden);
+    const groups = visibleGroups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      color: g.color,
+      kind: g.kind
+    }));
+    const byId = new Map(visibleGroups.map((g) => [g.id, g]));
+    const plans = [];
+    for (const item of settings.planItems) {
+      const group = byId.get((_a = item.groupId) != null ? _a : "");
+      if (!group)
+        continue;
       let start = parsePlanDate(item.start);
       let end = parsePlanDate(item.end);
       if (start && end && start > end)
@@ -2330,69 +3170,328 @@ var GanttView = class extends import_obsidian6.ItemView {
         end = start;
       if (!start && end)
         start = end;
-      return {
+      plans.push({
+        id: item.id,
         name: item.name,
         start,
         end,
-        color: (_a = item.color) != null ? _a : "",
-        kind: (_b = item.kind) != null ? _b : "team",
-        owner: (_c = item.owner) != null ? _c : ""
-      };
-    });
-    return rows.sort((a, b) => {
+        color: item.color || group.color,
+        kind: group.kind,
+        groupId: group.id
+      });
+    }
+    plans.sort((a, b) => {
       if (!a.start)
         return 1;
       if (!b.start)
         return -1;
       return a.start.getTime() - b.start.getTime();
     });
+    return { plans, groups };
+  }
+  /**
+   * 予定を変更して即保存し、再描画する。直前の状態を1回分だけ保持し、
+   * 通知の「元に戻す」で戻せるようにする
+   */
+  mutatePlans(message, change) {
+    this.planUndo = snapshotPlans(this.plugin.settings);
+    change();
+    void this.plugin.saveSettings();
+    this.renderView();
+    this.showUndoNotice(message);
+  }
+  showUndoNotice(message) {
+    const frag = document.createDocumentFragment();
+    frag.createSpan({ text: message });
+    const undoBtn = frag.createEl("button", { cls: "rg-undo-btn", text: "\u5143\u306B\u623B\u3059" });
+    const notice = new import_obsidian8.Notice(frag, 8e3);
+    undoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.undoPlans();
+      notice.hide();
+    });
+  }
+  undoPlans() {
+    if (!this.planUndo)
+      return;
+    this.plugin.settings.planGroups = this.planUndo.groups;
+    this.plugin.settings.planItems = this.planUndo.items;
+    this.planUndo = null;
+    void this.plugin.saveSettings();
+    this.renderView();
+    new import_obsidian8.Notice("\u4E88\u5B9A\u306E\u5909\u66F4\u3092\u5143\u306B\u623B\u3057\u307E\u3057\u305F");
+  }
+  /** 帯の空白のドラッグ・右クリックから予定を追加する */
+  openPlanCreator(req) {
+    const group = this.planGroupById(req.groupId);
+    if (!group) {
+      req.cancel();
+      return;
+    }
+    new PlanPopover({
+      host: this.contentEl,
+      anchor: req.anchor,
+      mode: "create",
+      kind: group.kind,
+      groups: this.planGroupsOfKind(group.kind),
+      value: {
+        name: "",
+        groupId: group.id,
+        start: formatDate(req.start),
+        end: formatDate(req.end),
+        color: ""
+      },
+      onSubmit: (value) => this.mutatePlans(`\u300C${value.name}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F`, () => {
+        this.plugin.settings.planItems.push({
+          id: newPlanId("plan"),
+          name: value.name,
+          start: value.start,
+          end: value.end,
+          groupId: value.groupId,
+          color: value.color
+        });
+      }),
+      onCancel: () => req.cancel()
+    });
+  }
+  /** バーのクリック・右クリックから予定を編集する */
+  openPlanEditor(planId, anchor) {
+    var _a, _b, _c, _d;
+    const item = this.plugin.settings.planItems.find((i) => i.id === planId);
+    if (!item)
+      return;
+    const group = this.planGroupById((_a = item.groupId) != null ? _a : "");
+    const kind = (_b = group == null ? void 0 : group.kind) != null ? _b : "team";
+    new PlanPopover({
+      host: this.contentEl,
+      anchor,
+      mode: "edit",
+      kind,
+      groups: this.planGroupsOfKind(kind),
+      value: {
+        name: item.name,
+        groupId: (_c = item.groupId) != null ? _c : "",
+        start: item.start,
+        end: item.end,
+        color: (_d = item.color) != null ? _d : ""
+      },
+      onSubmit: (value) => this.mutatePlans(`\u300C${value.name}\u300D\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F`, () => {
+        item.name = value.name;
+        item.start = value.start;
+        item.end = value.end;
+        item.groupId = value.groupId;
+        item.color = value.color;
+      }),
+      onDelete: () => this.deletePlan(planId)
+    });
+  }
+  deletePlan(planId) {
+    const item = this.plugin.settings.planItems.find((i) => i.id === planId);
+    if (!item)
+      return;
+    this.mutatePlans(`\u300C${item.name}\u300D\u3092\u524A\u9664\u3057\u307E\u3057\u305F`, () => {
+      this.plugin.settings.planItems.remove(item);
+    });
+  }
+  /** グループ(系統・担当者)の名前と色を編集する */
+  openGroupEditor(groupId, anchor) {
+    const group = this.planGroupById(groupId);
+    if (!group)
+      return;
+    new GroupPopover({
+      app: this.app,
+      host: this.contentEl,
+      anchor,
+      mode: "edit",
+      kind: group.kind,
+      value: { name: group.name, color: group.color },
+      suggestNames: () => this.planSuggestNames(),
+      fixedColorFor: (name) => this.fixedAssigneeColor(name),
+      onSubmit: (value) => this.mutatePlans(`\u300C${value.name}\u300D\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F`, () => {
+        group.name = value.name;
+        group.color = value.color;
+      }),
+      onDelete: () => this.mutatePlans(`\u300C${group.name}\u300D\u3092\u524A\u9664\u3057\u307E\u3057\u305F(\u4E88\u5B9A\u306F\u672A\u5206\u985E\u3078\u79FB\u52D5)`, () => {
+        const settings = this.plugin.settings;
+        settings.planGroups.remove(group);
+        const owned = settings.planItems.filter((item) => item.groupId === group.id);
+        if (owned.length > 0) {
+          const fallback = ensureUncategorizedGroup(settings.planGroups, group.kind);
+          for (const item of owned)
+            item.groupId = fallback.id;
+        }
+      })
+    });
+  }
+  openGroupCreator(kind, anchor) {
+    const settings = this.plugin.settings;
+    new GroupPopover({
+      app: this.app,
+      host: this.contentEl,
+      anchor,
+      mode: "create",
+      kind,
+      value: {
+        name: "",
+        color: defaultGroupColor(settings.planGroups, kind, "", settings.assigneeColors)
+      },
+      suggestNames: () => this.planSuggestNames(),
+      fixedColorFor: (name) => this.fixedAssigneeColor(name),
+      onSubmit: (value) => this.mutatePlans(`\u300C${value.name}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F`, () => {
+        settings.planGroups.push({
+          id: newPlanId("group"),
+          name: value.name,
+          color: value.color,
+          kind
+        });
+      })
+    });
+  }
+  /** 「担当者の色分け」設定の固定色。なければ null */
+  fixedAssigneeColor(name) {
+    const fixed = this.plugin.settings.assigneeColors.find(
+      (entry) => entry.name !== "" && entry.name === name
+    );
+    return fixed ? fixed.color : null;
+  }
+  /** 予定帯の操作をレンダラーへ渡す */
+  planInteractions() {
+    return {
+      onCreate: (req) => this.openPlanCreator(req),
+      onOpen: (planId, anchor) => this.openPlanEditor(planId, anchor),
+      onGroupOpen: (groupId, anchor) => this.openGroupEditor(groupId, anchor),
+      onContextMenu: (e, target) => {
+        const menu = new import_obsidian8.Menu();
+        if (target.type === "plan") {
+          const item = this.plugin.settings.planItems.find((i) => i.id === target.planId);
+          if (!item)
+            return;
+          menu.addItem(
+            (mi) => mi.setTitle(`\u300C${item.name}\u300D\u3092\u7DE8\u96C6\u2026`).setIcon("pencil").onClick(() => this.openPlanEditor(item.id, rectAtMouse(e)))
+          );
+          menu.addItem(
+            (mi) => mi.setTitle("\u524A\u9664").setIcon("trash").onClick(() => this.deletePlan(item.id))
+          );
+        } else {
+          const group = this.planGroupById(target.groupId);
+          if (!group)
+            return;
+          const date = target.date;
+          menu.addItem(
+            (mi) => mi.setTitle(`${date.getMonth() + 1}/${date.getDate()} \u306B\u300C${group.name}\u300D\u306E\u4E88\u5B9A\u3092\u8FFD\u52A0\u2026`).setIcon("plus").onClick(
+              () => this.openPlanCreator({
+                groupId: group.id,
+                start: date,
+                end: date,
+                anchor: rectAtMouse(e),
+                cancel: () => {
+                }
+              })
+            )
+          );
+          menu.addItem(
+            (mi) => mi.setTitle(`\u300C${group.name}\u300D\u306E\u8A2D\u5B9A\u2026`).setIcon("settings").onClick(() => this.openGroupEditor(group.id, rectAtMouse(e)))
+          );
+          menu.addSeparator();
+          menu.addItem(
+            (mi) => mi.setTitle(`${groupNoun(group.kind)}\u3092\u8FFD\u52A0\u2026`).setIcon("plus-circle").onClick(() => this.openGroupCreator(group.kind, rectAtMouse(e)))
+          );
+        }
+        menu.addSeparator();
+        menu.addItem(
+          (mi) => mi.setTitle("\u4E88\u5B9A\u306E\u4E00\u89A7\u3092\u7DE8\u96C6\u2026").setIcon("calendar-range").onClick(() => this.openPlanModal())
+        );
+        menu.showAtMouseEvent(e);
+      }
+    };
   }
   /** 設定変更などによる外部からの再描画 */
   rerender() {
     this.renderView();
   }
-  /** 表示側フィルタを適用して再描画する(再取得はしない) */
-  /** ガント表示時の全体予定の凡例(カラーキー)。クリックで予定の編集を開く */
+  /**
+   * ガント表示時の予定の凡例。グループごとに色と名前を出し、
+   * クリックで表示/非表示、右クリックで設定、「＋」で追加
+   */
   renderLegend() {
     const legend = this.legendEl;
     if (!legend)
       return;
     legend.empty();
-    const teamPlans = this.plugin.settings.planItems.filter(
-      (item) => {
-        var _a;
-        return item.name !== "" && ((_a = item.kind) != null ? _a : "team") !== "personal";
-      }
-    );
-    if (this.plugin.settings.viewMode !== "gantt" || teamPlans.length === 0) {
+    if (this.plugin.settings.viewMode !== "gantt") {
       legend.hide();
       return;
     }
     legend.show();
-    legend.createSpan({ cls: "rg-legend-title", text: "\u5168\u4F53\u4E88\u5B9A:" });
-    for (const item of teamPlans) {
-      const entry = legend.createSpan({ cls: "rg-legend-item" });
-      const dot = entry.createSpan({ cls: "rg-legend-dot" });
-      if (item.color)
-        dot.style.backgroundColor = item.color;
-      entry.createSpan({ text: item.name });
-      if (item.start || item.end) {
-        entry.setAttr("title", `${item.start || "?"} \u301C ${item.end || "?"}`);
+    const settings = this.plugin.settings;
+    for (const kind of ["team", "personal"]) {
+      if (kind === "personal")
+        legend.createSpan({ cls: "rg-legend-sep" });
+      legend.createSpan({ cls: "rg-legend-title", text: `${planKindLabel(kind)}:` });
+      for (const group of settings.planGroups.filter((g) => g.kind === kind)) {
+        const entry = legend.createEl("button", { cls: "rg-legend-item" });
+        entry.toggleClass("is-hidden", !!group.hidden);
+        const dot = entry.createSpan({ cls: "rg-legend-dot" });
+        dot.style.backgroundColor = group.color;
+        entry.createSpan({ text: group.name });
+        const count = settings.planItems.filter((item) => item.groupId === group.id).length;
+        entry.setAttr(
+          "title",
+          `${count}\u4EF6\u3002\u30AF\u30EA\u30C3\u30AF\u3067${group.hidden ? "\u8868\u793A" : "\u975E\u8868\u793A"}\u3001\u53F3\u30AF\u30EA\u30C3\u30AF\u3067\u8A2D\u5B9A`
+        );
+        entry.addEventListener("click", () => {
+          group.hidden = !group.hidden;
+          void this.plugin.saveSettings();
+          this.renderView();
+        });
+        entry.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          const menu = new import_obsidian8.Menu();
+          menu.addItem(
+            (mi) => mi.setTitle(`\u300C${group.name}\u300D\u306E\u8A2D\u5B9A\u2026`).setIcon("settings").onClick(() => this.openGroupEditor(group.id, entry.getBoundingClientRect()))
+          );
+          menu.addItem(
+            (mi) => mi.setTitle(group.hidden ? "\u30AC\u30F3\u30C8\u306B\u8868\u793A\u3059\u308B" : "\u30AC\u30F3\u30C8\u3067\u975E\u8868\u793A\u306B\u3059\u308B").setIcon(group.hidden ? "eye" : "eye-off").onClick(() => {
+              group.hidden = !group.hidden;
+              void this.plugin.saveSettings();
+              this.renderView();
+            })
+          );
+          menu.showAtMouseEvent(e);
+        });
       }
-      entry.addEventListener("click", () => this.openPlanModal());
+      const add = legend.createEl("button", { cls: "rg-legend-add", text: "\uFF0B" });
+      add.setAttr("aria-label", `${groupNoun(kind)}\u3092\u8FFD\u52A0`);
+      add.setAttr("title", `${groupNoun(kind)}\u3092\u8FFD\u52A0`);
+      add.addEventListener("click", () => this.openGroupCreator(kind, add.getBoundingClientRect()));
     }
+    const edit = legend.createEl("button", { cls: "rg-legend-edit", text: "\u4E00\u89A7\u3092\u7DE8\u96C6" });
+    edit.setAttr("title", "\u4E88\u5B9A\u306E\u4E00\u89A7\u3092\u307E\u3068\u3081\u3066\u7DE8\u96C6");
+    edit.addEventListener("click", () => this.openPlanModal());
   }
-  /** 予定の編集モーダルを開く(ツールバー・凡例・コマンドから共用) */
+  /** 予定の一覧編集モーダルを開く(ツールバー・凡例・右クリックメニュー・コマンドから共用) */
   openPlanModal() {
-    new PlanModal(this.app, this.plugin.settings.planItems, (items) => {
-      this.plugin.settings.planItems = items;
-      void this.plugin.saveSettings();
-      this.renderView();
-    }).open();
+    closePlanPopover();
+    new PlanModal(
+      this.app,
+      this.plugin.settings.planGroups,
+      this.plugin.settings.planItems,
+      {
+        suggestNames: () => this.planSuggestNames(),
+        assigneeColors: this.plugin.settings.assigneeColors
+      },
+      (groups, items) => {
+        this.plugin.settings.planGroups = groups;
+        this.plugin.settings.planItems = items;
+        void this.plugin.saveSettings();
+        this.renderView();
+      }
+    ).open();
   }
   renderView() {
     if (!this.chartEl || !this.rawIssues)
       return;
+    closePlanPopover();
     const { issues, contextIds } = this.visibleIssues();
     const model = buildGanttModel(issues, contextIds);
     const client = new RedmineClient(this.plugin.settings);
@@ -2416,13 +3515,17 @@ var GanttView = class extends import_obsidian6.ItemView {
         ...opts,
         widths: this.tableWidths,
         onEdit: (issueId) => this.openEditModal(issueId),
-        onOpenInPane: this.plugin.settings.openIssueInWebView && import_obsidian6.Platform.isDesktopApp ? (issueId) => void this.plugin.openRedmineWeb(client.issueUrl(issueId)) : void 0,
+        onOpenInPane: this.plugin.settings.openIssueInWebView && import_obsidian8.Platform.isDesktopApp ? (issueId) => void this.plugin.openRedmineWeb(client.issueUrl(issueId)) : void 0,
         subjectFilter: this.tableSubjectFilter,
         situationFilter: this.tableSituationFilter,
         groupBy: this.tableGroupBy
       });
     } else {
-      renderGantt(this.chartEl, model, this.planRows(), this.scale, this.ganttRange(), opts);
+      const { plans, groups } = this.planRows();
+      renderGantt(this.chartEl, model, plans, groups, this.scale, this.ganttRange(), {
+        ...opts,
+        plan: this.planInteractions()
+      });
     }
     const suffix = this.lastFetchedAt ? ` / \u6700\u7D42\u66F4\u65B0 ${this.lastFetchedAt}` : "";
     const shown = issues.length - contextIds.size;
@@ -2447,14 +3550,15 @@ var GanttView = class extends import_obsidian6.ItemView {
     (_a = this.statusEl) == null ? void 0 : _a.setText(text);
   }
   async onClose() {
+    closePlanPopover();
     this.contentEl.empty();
   }
 };
 
 // src/web/RedmineWebView.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 var VIEW_TYPE_REDMINE_WEB = "redmine-web-view";
-var RedmineWebView = class extends import_obsidian7.ItemView {
+var RedmineWebView = class extends import_obsidian9.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.currentUrl = "";
@@ -2476,7 +3580,7 @@ var RedmineWebView = class extends import_obsidian7.ItemView {
     this.contentEl.style.padding = "0";
     this.contentEl.style.position = "relative";
     this.contentEl.style.overflow = "hidden";
-    if (!import_obsidian7.Platform.isDesktopApp) {
+    if (!import_obsidian9.Platform.isDesktopApp) {
       this.contentEl.createDiv({
         cls: "rg-empty",
         text: "Redmine\u30D3\u30E5\u30FC\u306FObsidian\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248\u306E\u307F\u5BFE\u5FDC\u3067\u3059\u3002"
@@ -2524,7 +3628,7 @@ var RedmineWebView = class extends import_obsidian7.ItemView {
 };
 
 // src/main.ts
-var RedmineGanttPlugin = class extends import_obsidian8.Plugin {
+var RedmineGanttPlugin = class extends import_obsidian10.Plugin {
   async onload() {
     await this.loadSettings();
     this.registerView(VIEW_TYPE_REDMINE_GANTT, (leaf) => new GanttView(leaf, this));
@@ -2536,11 +3640,21 @@ var RedmineGanttPlugin = class extends import_obsidian8.Plugin {
       id: "edit-plans",
       name: "\u5168\u4F53\u4E88\u5B9A\u30FB\u500B\u4EBA\u4E88\u5B9A\u3092\u7DE8\u96C6",
       callback: () => {
-        new PlanModal(this.app, this.settings.planItems, (items) => {
-          this.settings.planItems = items;
-          void this.saveSettings();
-          this.refreshGanttViews();
-        }).open();
+        new PlanModal(
+          this.app,
+          this.settings.planGroups,
+          this.settings.planItems,
+          {
+            suggestNames: () => this.planSuggestNames(),
+            assigneeColors: this.settings.assigneeColors
+          },
+          (groups, items) => {
+            this.settings.planGroups = groups;
+            this.settings.planItems = items;
+            void this.saveSettings();
+            this.refreshGanttViews();
+          }
+        ).open();
       }
     });
     this.addCommand({
@@ -2587,6 +3701,21 @@ var RedmineGanttPlugin = class extends import_obsidian8.Plugin {
     if (this.settings.activeFilter && !this.settings.filters.some((f) => f.name === this.settings.activeFilter)) {
       this.settings.activeFilter = "";
     }
+    if (migratePlans(this.settings)) {
+      await this.saveSettings();
+    }
+  }
+  /** 個人予定の担当者名のサジェスト候補(担当者の色分け設定+既存の担当者グループ) */
+  planSuggestNames() {
+    const names = /* @__PURE__ */ new Set();
+    for (const entry of this.settings.assigneeColors)
+      if (entry.name)
+        names.add(entry.name);
+    for (const group of this.settings.planGroups) {
+      if (group.kind === "personal" && group.name)
+        names.add(group.name);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "ja"));
   }
   async saveSettings() {
     await this.saveData(this.settings);

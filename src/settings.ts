@@ -35,6 +35,21 @@ export type PlanStatus = "todo" | "doing" | "done";
 export type PlanKind = "team" | "personal";
 
 /**
+ * 予定のグループ。全体予定では系統(リリース・ICGなど)、個人予定では担当者を表す。
+ * バーの色はグループ単位で持ち、ガントでは1グループ=1行(重なる場合のみ行を増やす)で表示する。
+ */
+export interface PlanGroup {
+	id: string;
+	/** 全体予定は系統名、個人予定は担当者名 */
+	name: string;
+	/** "#rrggbb" */
+	color: string;
+	kind: PlanKind;
+	/** ガントで非表示(凡例クリックで切替)。編集モーダルには表示する */
+	hidden?: boolean;
+}
+
+/**
  * 予定の項目。Redmineとは独立してプラグイン内(data.json)に保存し、
  * ガントチャートの最上段(全体予定/個人予定の行)に表示する。
  */
@@ -47,12 +62,14 @@ export interface PlanItem {
 	end: string;
 	/** @deprecated 旧バージョンのステータス。表示には使わない(読み捨て互換用) */
 	status?: PlanStatus;
-	/** バーの色 "#rrggbb"。空文字・未設定は種別ごとの既定色 */
+	/** 任意の上書き色 "#rrggbb"。空文字・未設定はグループの色 */
 	color?: string;
-	/** 種別。未設定は全体予定として扱う(旧データ互換) */
+	/** @deprecated グループ導入前の種別。読み込み時にグループへ振り分けたあとは参照しない */
 	kind?: PlanKind;
-	/** 個人予定の担当者名。同じ担当者の予定はガントで同じ行にまとめる */
+	/** @deprecated グループ導入前の担当者名。読み込み時に個人予定のグループへ変換する */
 	owner?: string;
+	/** 所属グループのID。未設定・不明なIDは読み込み時に「未分類」グループへ振り分ける */
+	groupId?: string;
 }
 
 export interface RedmineGanttSettings {
@@ -63,6 +80,8 @@ export interface RedmineGanttSettings {
 	/** 選択中フィルタの name。空文字は未選択 */
 	activeFilter: string;
 	viewMode: ViewMode;
+	/** 予定のグループ。配列順がガント・モーダルでの並び順 */
+	planGroups: PlanGroup[];
 	planItems: PlanItem[];
 	assigneeColors: AssigneeColor[];
 	/** テーブルの文字サイズ(px)。行の高さも連動する */
@@ -78,6 +97,7 @@ export const DEFAULT_SETTINGS: RedmineGanttSettings = {
 	filters: [],
 	activeFilter: "",
 	viewMode: "gantt",
+	planGroups: [],
 	planItems: [],
 	assigneeColors: [],
 	tableFontSize: 11,

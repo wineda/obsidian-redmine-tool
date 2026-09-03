@@ -6,6 +6,7 @@ import {
 } from "./settings";
 import { GanttView, VIEW_TYPE_REDMINE_GANTT } from "./gantt/GanttView";
 import { PlanModal } from "./plan/PlanModal";
+import { migratePlans } from "./plan/plans";
 import { RedmineWebView, VIEW_TYPE_REDMINE_WEB } from "./web/RedmineWebView";
 
 export default class RedmineGanttPlugin extends Plugin {
@@ -25,11 +26,21 @@ export default class RedmineGanttPlugin extends Plugin {
 			id: "edit-plans",
 			name: "全体予定・個人予定を編集",
 			callback: () => {
-				new PlanModal(this.app, this.settings.planItems, (items) => {
-					this.settings.planItems = items;
-					void this.saveSettings();
-					this.refreshGanttViews();
-				}).open();
+				new PlanModal(
+					this.app,
+					this.settings.planGroups,
+					this.settings.planItems,
+					{
+						suggestNames: () => this.planSuggestNames(),
+						assigneeColors: this.settings.assigneeColors,
+					},
+					(groups, items) => {
+						this.settings.planGroups = groups;
+						this.settings.planItems = items;
+						void this.saveSettings();
+						this.refreshGanttViews();
+					}
+				).open();
 			},
 		});
 
@@ -85,6 +96,20 @@ export default class RedmineGanttPlugin extends Plugin {
 		) {
 			this.settings.activeFilter = "";
 		}
+		// グループ導入前の予定(kind/owner)をグループへ振り分ける。IDを安定させるため変更があれば保存する
+		if (migratePlans(this.settings)) {
+			await this.saveSettings();
+		}
+	}
+
+	/** 個人予定の担当者名のサジェスト候補(担当者の色分け設定+既存の担当者グループ) */
+	planSuggestNames(): string[] {
+		const names = new Set<string>();
+		for (const entry of this.settings.assigneeColors) if (entry.name) names.add(entry.name);
+		for (const group of this.settings.planGroups) {
+			if (group.kind === "personal" && group.name) names.add(group.name);
+		}
+		return Array.from(names).sort((a, b) => a.localeCompare(b, "ja"));
 	}
 
 	async saveSettings(): Promise<void> {
