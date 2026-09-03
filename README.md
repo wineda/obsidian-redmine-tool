@@ -63,15 +63,38 @@
 1. 「管理 → 設定 → API」で **REST APIを有効にする** をオンにする
 2. 「個人設定」ページで **APIアクセスキー** を確認する
 
-## インストール(ビルド不要)
+## インストール
+
+### BRAT で入れる(自動更新あり・推奨)
+
+コミュニティプラグインの [BRAT](https://github.com/TfTHacker/obsidian42-brat)(Beta Reviewer's Auto-update Tool)を使うと、GitHub のリリースから直接インストールでき、新しいリリースが出たときに自動で更新されます。
+
+1. Obsidian の設定 → コミュニティプラグインで **BRAT** をインストールして有効化する
+2. BRAT の設定 → **Add Beta plugin** で `wineda/obsidian-redmine-tool` を入力して追加する
+3. 設定 → コミュニティプラグインで「Redmine Gantt」を有効化する
+
+BRAT は起動時(または BRAT のコマンド「Check for updates to all beta plugins」)に新しいリリースを確認し、あれば自動で入れ替えます。
+
+### 手動で入れる(ビルド不要)
 
 ビルド済みの `main.js` をリポジトリに含めているため、Node.js は不要です。
 
-1. このリポジトリをダウンロード(またはクローン)する
-2. Vault の `.obsidian/plugins/redmine-gantt/` フォルダを作成し、`main.js` / `manifest.json` / `styles.css` の3ファイルをコピーする
+1. このリポジトリをダウンロード(またはクローン)するか、[Releases](https://github.com/wineda/obsidian-redmine-tool/releases) から `main.js` / `manifest.json` / `styles.css` を取得する
+2. Vault の `.obsidian/plugins/redmine-gantt/` フォルダを作成し、3ファイルをコピーする
 3. Obsidian の設定 → コミュニティプラグインで「Redmine Gantt」を有効化
 
 ソースを変更した場合は `npm install && npm run build` で `main.js` を再生成してください(コミットに含めます)。
+
+### リリースの作り方(開発者向け)
+
+`main` に push されると GitHub Actions(`.github/workflows/release.yml`)が `manifest.json` の `version` を読み、同じ番号のリリースがまだなければビルドして `main.js` / `manifest.json` / `styles.css` を添付したリリースを作ります。BRAT はこのリリースを取得します。
+
+```bash
+npm version patch   # package.json / manifest.json / versions.json の version を上げてコミット(minor / major も可)
+git push origin main --follow-tags
+```
+
+`version` を上げずに push した場合はリリースを作らないので、BRAT 利用者には配布されません。BRAT は既定ブランチの `manifest.json` の `version` を見るため、GitHub の既定ブランチは `main` にしておいてください。
 
 ## 設定
 
