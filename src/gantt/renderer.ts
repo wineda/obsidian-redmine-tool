@@ -73,11 +73,22 @@ export type PlanMenuTarget =
 	| { type: "plan"; planId: string }
 	| { type: "lane"; groupId: string; date: Date };
 
+/** バーのドラッグ(移動・期間変更・別グループへの移動)が終わったときの変更内容 */
+export interface PlanMoveRequest {
+	planId: string;
+	/** 移動先のグループ(同じ種別)。変わらなければ元のグループ */
+	groupId: string;
+	start: Date;
+	end: Date;
+}
+
 /** 予定帯に対する操作。未指定なら予定帯は表示のみ */
 export interface PlanInteractions {
 	onCreate: (req: PlanCreateRequest) => void;
 	/** バー・マーカーのクリック */
 	onOpen: (planId: string, anchor: DOMRect) => void;
+	/** バーのドラッグ移動・両端のドラッグによる期間変更 */
+	onMove: (req: PlanMoveRequest) => void;
 	/** 左ペインのグループ名のクリック */
 	onGroupOpen: (groupId: string, anchor: DOMRect) => void;
 	onContextMenu: (e: MouseEvent, target: PlanMenuTarget) => void;
@@ -457,6 +468,18 @@ export function renderGantt(
 				if (plan.color) label.style.fill = plan.color;
 				label.textContent = plan.name;
 				group.appendChild(label);
+				if (opts.plan) {
+					// 右端をドラッグすると複数日に伸ばせる
+					group.appendChild(
+						svg("rect", {
+							x: cx + half - 2,
+							y,
+							width: 6,
+							height: h,
+							class: "rg-plan-handle rg-plan-handle-r",
+						})
+					);
+				}
 			} else {
 				// 複数日の予定: ブロック表示。3日以内はタイトルを右側に、それ以上はブロック内に描く
 				const span = clipSpan(plan.start, plan.end, range);
@@ -498,6 +521,26 @@ export function renderGantt(
 						group.appendChild(label);
 					}
 				}
+				if (opts.plan) {
+					// 両端のハンドル(ドラッグで期間変更)。表示範囲で切れている側には出さない
+					const handleW = Math.min(8, Math.max(4, Math.floor(w / 3)));
+					if (span.s.getTime() === plan.start.getTime()) {
+						group.appendChild(
+							svg("rect", { x, y, width: handleW, height: h, class: "rg-plan-handle rg-plan-handle-l" })
+						);
+					}
+					if (span.e.getTime() === plan.end.getTime()) {
+						group.appendChild(
+							svg("rect", {
+								x: x + w - handleW,
+								y,
+								width: handleW,
+								height: h,
+								class: "rg-plan-handle rg-plan-handle-r",
+							})
+						);
+					}
+				}
 			}
 			topSvg.appendChild(group);
 		}
@@ -510,7 +553,7 @@ export function renderGantt(
 		);
 	}
 
-	// ---- 予定帯の操作: クリックで編集、ドラッグで作成、右クリックでメニュー ----
+	// ---- 予定帯の操作: クリックで編集、ドラッグで作成・移動・期間変更、右クリックでメニュー ----
 	if (opts.plan) {
 		const plan = opts.plan;
 		const blockOf = (groupId: string) => blocks.find((b) => b.group.id === groupId);
@@ -519,8 +562,78 @@ export function renderGantt(
 			const rect = topSvg.getBoundingClientRect();
 			return Math.max(0, Math.min(range.days, Math.floor((e.clientX - rect.left) / ppd)));
 		};
+		/** マウス位置にある予定帯のグループ行 */
+		const blockAt = (e: MouseEvent) => {
+			const y = e.clientY - topSvg.getBoundingClientRect().top;
+			return blocks.find((b) => y >= b.top && y < b.top + b.lanes * rowHeight);
+		};
+		const spanLabel = (s: number, en: number) => {
+			const from = addDays(range.start, s);
+			const to = addDays(range.start, en);
+			return en === s
+				? `${formatMonthDay(from)} · 1日`
+				: `${formatMonthDay(from)} 〜 ${formatMonthDay(to)} · ${en - s + 1}日`;
+		};
+		/** ドラッグ中の仮表示(範囲の矩形+期間ラベル) */
+		const makeGhost = () => {
+			const rect = svg("rect", { rx: 3, class: "rg-plan-ghost" });
+			const label = svg("text", { "font-size": opts.fontSize, class: "rg-plan-ghost-label" });
+			topSvg.appendChild(rect);
+			topSvg.appendChild(label);
+			const h = rowHeight - barPadding * 2;
+			return {
+				rect,
+				show(s: number, en: number, y: number, text: string) {
+					rect.setAttribute("x", String(s * ppd));
+					rect.setAttribute("y", String(y));
+					rect.setAttribute("width", String((en - s + 1) * ppd));
+					rect.setAttribute("height", String(h));
+					label.setAttribute("x", String((en + 1) * ppd + 4));
+					label.setAttribute("y", String(y + Math.round(h / 2 + opts.fontSize * 0.35)));
+					label.textContent = text;
+				},
+				remove() {
+					rect.remove();
+					label.remove();
+				},
+			};
+		};
+		/** ドラッグ中だけ document に付けるリスナー(mouseup か Esc でまとめて外す) */
+		const trackDrag = (
+			handlers: { move: (e: MouseEvent) => void; up: () => void; cancel: () => void },
+			bodyClass: string
+		) => {
+			const detach = () => {
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+				document.removeEventListener("keydown", onKey);
+				document.body.removeClass(bodyClass);
+			};
+			const onMove = (ev: MouseEvent) => handlers.move(ev);
+			const onUp = () => {
+				detach();
+				handlers.up();
+			};
+			const onKey = (ev: KeyboardEvent) => {
+				if (ev.key === "Escape") {
+					detach();
+					handlers.cancel();
+				}
+			};
+			document.body.addClass(bodyClass);
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
+			document.addEventListener("keydown", onKey);
+		};
+
+		// バーをドラッグしたあとの click では編集を開かない(mouseup の直後に click が発火するため)
+		let suppressClick = false;
 
 		topSvg.addEventListener("click", (e) => {
+			if (suppressClick) {
+				suppressClick = false;
+				return;
+			}
 			const item = (e.target as Element).closest("[data-plan-id]");
 			if (!item) return;
 			const planId = item.getAttribute("data-plan-id");
@@ -545,81 +658,134 @@ export function renderGantt(
 			plan.onContextMenu(e, { type: "lane", groupId, date: addDays(range.start, dayIndexAt(e)) });
 		});
 
+		/** 帯の空白のドラッグ: 新しい予定の期間を決める(仮表示は最下段のレーン) */
+		const startCreateDrag = (e: MouseEvent, block: PlanBlock) => {
+			const startIndex = dayIndexAt(e);
+			let currentIndex = startIndex;
+			const ghost = makeGhost();
+			const ghostY = block.top + (block.lanes - 1) * rowHeight + barPadding;
+			const update = () => {
+				const s = Math.min(startIndex, currentIndex);
+				const en = Math.max(startIndex, currentIndex);
+				ghost.show(s, en, ghostY, spanLabel(s, en));
+			};
+			update();
+			trackDrag(
+				{
+					move: (ev) => {
+						currentIndex = dayIndexAt(ev);
+						update();
+					},
+					up: () => {
+						const s = Math.min(startIndex, currentIndex);
+						const en = Math.max(startIndex, currentIndex);
+						plan.onCreate({
+							groupId: block.group.id,
+							start: addDays(range.start, s),
+							end: addDays(range.start, en),
+							anchor: ghost.rect.getBoundingClientRect(),
+							cancel: () => ghost.remove(),
+						});
+					},
+					cancel: () => ghost.remove(),
+				},
+				"rg-plan-dragging"
+			);
+		};
+
+		/**
+		 * バーのドラッグ: 本体なら移動(上下に動かすと同じ種別の別グループへ)、
+		 * 両端のハンドルなら期間変更。日単位にスナップし、動かさずに離せばクリック(編集)扱い
+		 */
+		const startPlanDrag = (e: MouseEvent, itemEl: Element, target: Element) => {
+			const planId = itemEl.getAttribute("data-plan-id");
+			const block = blocks.find((b) => b.plans.some((p) => p.id === planId));
+			const dated = block?.plans.find((p) => p.id === planId);
+			if (!planId || !block || !dated) return;
+			const mode: "move" | "resize-l" | "resize-r" = target.classList.contains("rg-plan-handle-l")
+				? "resize-l"
+				: target.classList.contains("rg-plan-handle-r")
+					? "resize-r"
+					: "move";
+			const origStart = diffDays(range.start, dated.start);
+			const origEnd = diffDays(range.start, dated.end);
+			const startIndex = dayIndexAt(e);
+			const lane = block.laneOf.get(planId) ?? 0;
+			let s = origStart;
+			let en = origEnd;
+			let targetBlock = block;
+			let moved = false;
+			const ghost = makeGhost();
+			itemEl.classList.add("is-dragging");
+			const update = () => {
+				const y =
+					(targetBlock === block ? block.top + lane * rowHeight : targetBlock.top) + barPadding;
+				const text =
+					targetBlock === block
+						? spanLabel(s, en)
+						: `→ ${targetBlock.group.name} · ${spanLabel(s, en)}`;
+				ghost.show(s, en, y, text);
+			};
+			update();
+			const finish = () => {
+				ghost.remove();
+				itemEl.classList.remove("is-dragging");
+			};
+			trackDrag(
+				{
+					move: (ev) => {
+						const delta = dayIndexAt(ev) - startIndex;
+						if (mode === "move") {
+							s = origStart + delta;
+							en = origEnd + delta;
+							const over = blockAt(ev);
+							targetBlock = over && over.group.kind === block.group.kind ? over : block;
+						} else if (mode === "resize-l") {
+							s = Math.min(origStart + delta, origEnd);
+						} else {
+							en = Math.max(origEnd + delta, origStart);
+						}
+						moved = s !== origStart || en !== origEnd || targetBlock !== block;
+						update();
+					},
+					up: () => {
+						finish();
+						// 動かしていなければクリック扱い(続く click イベントで編集が開く)
+						if (!moved) return;
+						suppressClick = true;
+						plan.onMove({
+							planId,
+							groupId: targetBlock.group.id,
+							start: addDays(range.start, s),
+							end: addDays(range.start, en),
+						});
+					},
+					cancel: () => {
+						finish();
+						suppressClick = true;
+					},
+				},
+				mode === "move" ? "rg-plan-moving" : "rg-plan-resizing"
+			);
+		};
+
 		topSvg.addEventListener("mousedown", (e) => {
 			if (e.button !== 0) return;
+			suppressClick = false;
 			const target = e.target as Element;
-			if (target.closest("[data-plan-id]")) return;
+			const item = target.closest("[data-plan-id]");
+			if (item) {
+				e.preventDefault();
+				startPlanDrag(e, item, target);
+				return;
+			}
 			const lane = target.closest("[data-plan-group]");
 			if (!lane) return;
 			const groupId = lane.getAttribute("data-plan-group");
 			const block = groupId ? blockOf(groupId) : undefined;
-			if (!groupId || !block) return;
+			if (!block) return;
 			e.preventDefault();
-
-			// ドラッグ範囲の仮表示(最下段のレーンに描く)
-			const startIndex = dayIndexAt(e);
-			let currentIndex = startIndex;
-			const ghostY = block.top + (block.lanes - 1) * rowHeight + barPadding;
-			const ghostH = rowHeight - barPadding * 2;
-			const ghost = svg("rect", { y: ghostY, height: ghostH, rx: 3, class: "rg-plan-ghost" });
-			const ghostLabel = svg("text", {
-				y: ghostY + Math.round(ghostH / 2 + opts.fontSize * 0.35),
-				"font-size": opts.fontSize,
-				class: "rg-plan-ghost-label",
-			});
-			topSvg.appendChild(ghost);
-			topSvg.appendChild(ghostLabel);
-			const removeGhost = () => {
-				ghost.remove();
-				ghostLabel.remove();
-			};
-			const update = () => {
-				const s = Math.min(startIndex, currentIndex);
-				const en = Math.max(startIndex, currentIndex);
-				ghost.setAttribute("x", String(s * ppd));
-				ghost.setAttribute("width", String((en - s + 1) * ppd));
-				ghostLabel.setAttribute("x", String((en + 1) * ppd + 4));
-				const from = addDays(range.start, s);
-				const to = addDays(range.start, en);
-				ghostLabel.textContent =
-					en === s
-						? `${formatMonthDay(from)} · 1日`
-						: `${formatMonthDay(from)} 〜 ${formatMonthDay(to)} · ${en - s + 1}日`;
-			};
-			update();
-
-			const detach = () => {
-				document.removeEventListener("mousemove", onMove);
-				document.removeEventListener("mouseup", onUp);
-				document.removeEventListener("keydown", onKey);
-				document.body.removeClass("rg-plan-dragging");
-			};
-			const onMove = (ev: MouseEvent) => {
-				currentIndex = dayIndexAt(ev);
-				update();
-			};
-			const onKey = (ev: KeyboardEvent) => {
-				if (ev.key === "Escape") {
-					detach();
-					removeGhost();
-				}
-			};
-			const onUp = () => {
-				detach();
-				const s = Math.min(startIndex, currentIndex);
-				const en = Math.max(startIndex, currentIndex);
-				plan.onCreate({
-					groupId,
-					start: addDays(range.start, s),
-					end: addDays(range.start, en),
-					anchor: ghost.getBoundingClientRect(),
-					cancel: removeGhost,
-				});
-			};
-			document.body.addClass("rg-plan-dragging");
-			document.addEventListener("mousemove", onMove);
-			document.addEventListener("mouseup", onUp);
-			document.addEventListener("keydown", onKey);
+			startCreateDrag(e, block);
 		});
 	}
 
@@ -802,6 +968,6 @@ function planTooltip(plan: PlanRow, groupName: string): string {
 		plan.name,
 		`期間: ${formatDate(plan.start)} 〜 ${formatDate(plan.end)}`,
 		plan.kind === "personal" ? `担当: ${groupName}` : `全体予定 / ${groupName}`,
-		"クリックで編集",
+		"クリックで編集、ドラッグで移動、両端で期間変更",
 	].join("\n");
 }

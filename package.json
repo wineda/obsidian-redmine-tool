@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-redmine-gantt",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Display Redmine tickets as a Gantt chart in Obsidian (read-only).",
 	"main": "main.js",
 	"scripts": {

@@ -22,10 +22,11 @@ import {
 	PlanCreateRequest,
 	PlanGroupRow,
 	PlanInteractions,
+	PlanMoveRequest,
 	PlanRow,
 	renderGantt,
 } from "./renderer";
-import { TimeRange, formatDate, monthRange } from "./scale";
+import { TimeRange, diffDays, formatDate, monthRange } from "./scale";
 import {
 	SituationFilter,
 	TableGroupBy,
@@ -664,6 +665,31 @@ export class GanttView extends ItemView {
 		});
 	}
 
+	/** バーのドラッグ結果(移動・期間変更・別グループへ)を保存する */
+	private movePlan(req: PlanMoveRequest): void {
+		const item = this.plugin.settings.planItems.find((i) => i.id === req.planId);
+		if (!item) return;
+		const group = this.planGroupById(req.groupId);
+		const groupChanged = !!group && group.id !== item.groupId;
+		const oldStart = parsePlanDate(item.start);
+		const oldEnd = parsePlanDate(item.end);
+		const durationChanged =
+			!oldStart || !oldEnd || diffDays(oldStart, oldEnd) !== diffDays(req.start, req.end);
+		const md = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
+		const span =
+			diffDays(req.start, req.end) === 0 ? md(req.start) : `${md(req.start)} 〜 ${md(req.end)}`;
+		const message = groupChanged
+			? `「${item.name}」を「${group.name}」の ${span} に移動しました`
+			: durationChanged
+				? `「${item.name}」の期間を ${span} に変更しました`
+				: `「${item.name}」を ${span} に移動しました`;
+		this.mutatePlans(message, () => {
+			item.start = formatDate(req.start);
+			item.end = formatDate(req.end);
+			if (group) item.groupId = group.id;
+		});
+	}
+
 	private deletePlan(planId: string): void {
 		const item = this.plugin.settings.planItems.find((i) => i.id === planId);
 		if (!item) return;
@@ -742,6 +768,7 @@ export class GanttView extends ItemView {
 		return {
 			onCreate: (req) => this.openPlanCreator(req),
 			onOpen: (planId, anchor) => this.openPlanEditor(planId, anchor),
+			onMove: (req) => this.movePlan(req),
 			onGroupOpen: (groupId, anchor) => this.openGroupEditor(groupId, anchor),
 			onContextMenu: (e, target) => {
 				const menu = new Menu();

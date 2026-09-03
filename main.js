@@ -2176,6 +2176,17 @@ function renderGantt(container, model, plans, groups, scale, range, opts) {
           label.style.fill = plan.color;
         label.textContent = plan.name;
         group.appendChild(label);
+        if (opts.plan) {
+          group.appendChild(
+            svg("rect", {
+              x: cx + half - 2,
+              y,
+              width: 6,
+              height: h,
+              class: "rg-plan-handle rg-plan-handle-r"
+            })
+          );
+        }
       } else {
         const span = clipSpan(plan.start, plan.end, range);
         if (!span)
@@ -2218,6 +2229,25 @@ function renderGantt(container, model, plans, groups, scale, range, opts) {
             group.appendChild(label);
           }
         }
+        if (opts.plan) {
+          const handleW = Math.min(8, Math.max(4, Math.floor(w / 3)));
+          if (span.s.getTime() === plan.start.getTime()) {
+            group.appendChild(
+              svg("rect", { x, y, width: handleW, height: h, class: "rg-plan-handle rg-plan-handle-l" })
+            );
+          }
+          if (span.e.getTime() === plan.end.getTime()) {
+            group.appendChild(
+              svg("rect", {
+                x: x + w - handleW,
+                y,
+                width: handleW,
+                height: h,
+                class: "rg-plan-handle rg-plan-handle-r"
+              })
+            );
+          }
+        }
       }
       topSvg.appendChild(group);
     }
@@ -2234,7 +2264,67 @@ function renderGantt(container, model, plans, groups, scale, range, opts) {
       const rect = topSvg.getBoundingClientRect();
       return Math.max(0, Math.min(range.days, Math.floor((e.clientX - rect.left) / ppd)));
     };
+    const blockAt = (e) => {
+      const y = e.clientY - topSvg.getBoundingClientRect().top;
+      return blocks.find((b) => y >= b.top && y < b.top + b.lanes * rowHeight);
+    };
+    const spanLabel = (s, en) => {
+      const from = addDays(range.start, s);
+      const to = addDays(range.start, en);
+      return en === s ? `${formatMonthDay(from)} \xB7 1\u65E5` : `${formatMonthDay(from)} \u301C ${formatMonthDay(to)} \xB7 ${en - s + 1}\u65E5`;
+    };
+    const makeGhost = () => {
+      const rect = svg("rect", { rx: 3, class: "rg-plan-ghost" });
+      const label = svg("text", { "font-size": opts.fontSize, class: "rg-plan-ghost-label" });
+      topSvg.appendChild(rect);
+      topSvg.appendChild(label);
+      const h = rowHeight - barPadding * 2;
+      return {
+        rect,
+        show(s, en, y, text) {
+          rect.setAttribute("x", String(s * ppd));
+          rect.setAttribute("y", String(y));
+          rect.setAttribute("width", String((en - s + 1) * ppd));
+          rect.setAttribute("height", String(h));
+          label.setAttribute("x", String((en + 1) * ppd + 4));
+          label.setAttribute("y", String(y + Math.round(h / 2 + opts.fontSize * 0.35)));
+          label.textContent = text;
+        },
+        remove() {
+          rect.remove();
+          label.remove();
+        }
+      };
+    };
+    const trackDrag = (handlers, bodyClass) => {
+      const detach = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("keydown", onKey);
+        document.body.removeClass(bodyClass);
+      };
+      const onMove = (ev) => handlers.move(ev);
+      const onUp = () => {
+        detach();
+        handlers.up();
+      };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") {
+          detach();
+          handlers.cancel();
+        }
+      };
+      document.body.addClass(bodyClass);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.addEventListener("keydown", onKey);
+    };
+    let suppressClick = false;
     topSvg.addEventListener("click", (e) => {
+      if (suppressClick) {
+        suppressClick = false;
+        return;
+      }
       const item = e.target.closest("[data-plan-id]");
       if (!item)
         return;
@@ -2262,79 +2352,124 @@ function renderGantt(container, model, plans, groups, scale, range, opts) {
       e.preventDefault();
       plan.onContextMenu(e, { type: "lane", groupId, date: addDays(range.start, dayIndexAt(e)) });
     });
+    const startCreateDrag = (e, block) => {
+      const startIndex = dayIndexAt(e);
+      let currentIndex = startIndex;
+      const ghost = makeGhost();
+      const ghostY = block.top + (block.lanes - 1) * rowHeight + barPadding;
+      const update = () => {
+        const s = Math.min(startIndex, currentIndex);
+        const en = Math.max(startIndex, currentIndex);
+        ghost.show(s, en, ghostY, spanLabel(s, en));
+      };
+      update();
+      trackDrag(
+        {
+          move: (ev) => {
+            currentIndex = dayIndexAt(ev);
+            update();
+          },
+          up: () => {
+            const s = Math.min(startIndex, currentIndex);
+            const en = Math.max(startIndex, currentIndex);
+            plan.onCreate({
+              groupId: block.group.id,
+              start: addDays(range.start, s),
+              end: addDays(range.start, en),
+              anchor: ghost.rect.getBoundingClientRect(),
+              cancel: () => ghost.remove()
+            });
+          },
+          cancel: () => ghost.remove()
+        },
+        "rg-plan-dragging"
+      );
+    };
+    const startPlanDrag = (e, itemEl, target) => {
+      var _a2;
+      const planId = itemEl.getAttribute("data-plan-id");
+      const block = blocks.find((b) => b.plans.some((p) => p.id === planId));
+      const dated = block == null ? void 0 : block.plans.find((p) => p.id === planId);
+      if (!planId || !block || !dated)
+        return;
+      const mode = target.classList.contains("rg-plan-handle-l") ? "resize-l" : target.classList.contains("rg-plan-handle-r") ? "resize-r" : "move";
+      const origStart = diffDays(range.start, dated.start);
+      const origEnd = diffDays(range.start, dated.end);
+      const startIndex = dayIndexAt(e);
+      const lane = (_a2 = block.laneOf.get(planId)) != null ? _a2 : 0;
+      let s = origStart;
+      let en = origEnd;
+      let targetBlock = block;
+      let moved = false;
+      const ghost = makeGhost();
+      itemEl.classList.add("is-dragging");
+      const update = () => {
+        const y = (targetBlock === block ? block.top + lane * rowHeight : targetBlock.top) + barPadding;
+        const text = targetBlock === block ? spanLabel(s, en) : `\u2192 ${targetBlock.group.name} \xB7 ${spanLabel(s, en)}`;
+        ghost.show(s, en, y, text);
+      };
+      update();
+      const finish = () => {
+        ghost.remove();
+        itemEl.classList.remove("is-dragging");
+      };
+      trackDrag(
+        {
+          move: (ev) => {
+            const delta = dayIndexAt(ev) - startIndex;
+            if (mode === "move") {
+              s = origStart + delta;
+              en = origEnd + delta;
+              const over = blockAt(ev);
+              targetBlock = over && over.group.kind === block.group.kind ? over : block;
+            } else if (mode === "resize-l") {
+              s = Math.min(origStart + delta, origEnd);
+            } else {
+              en = Math.max(origEnd + delta, origStart);
+            }
+            moved = s !== origStart || en !== origEnd || targetBlock !== block;
+            update();
+          },
+          up: () => {
+            finish();
+            if (!moved)
+              return;
+            suppressClick = true;
+            plan.onMove({
+              planId,
+              groupId: targetBlock.group.id,
+              start: addDays(range.start, s),
+              end: addDays(range.start, en)
+            });
+          },
+          cancel: () => {
+            finish();
+            suppressClick = true;
+          }
+        },
+        mode === "move" ? "rg-plan-moving" : "rg-plan-resizing"
+      );
+    };
     topSvg.addEventListener("mousedown", (e) => {
       if (e.button !== 0)
         return;
+      suppressClick = false;
       const target = e.target;
-      if (target.closest("[data-plan-id]"))
+      const item = target.closest("[data-plan-id]");
+      if (item) {
+        e.preventDefault();
+        startPlanDrag(e, item, target);
         return;
+      }
       const lane = target.closest("[data-plan-group]");
       if (!lane)
         return;
       const groupId = lane.getAttribute("data-plan-group");
       const block = groupId ? blockOf(groupId) : void 0;
-      if (!groupId || !block)
+      if (!block)
         return;
       e.preventDefault();
-      const startIndex = dayIndexAt(e);
-      let currentIndex = startIndex;
-      const ghostY = block.top + (block.lanes - 1) * rowHeight + barPadding;
-      const ghostH = rowHeight - barPadding * 2;
-      const ghost = svg("rect", { y: ghostY, height: ghostH, rx: 3, class: "rg-plan-ghost" });
-      const ghostLabel = svg("text", {
-        y: ghostY + Math.round(ghostH / 2 + opts.fontSize * 0.35),
-        "font-size": opts.fontSize,
-        class: "rg-plan-ghost-label"
-      });
-      topSvg.appendChild(ghost);
-      topSvg.appendChild(ghostLabel);
-      const removeGhost = () => {
-        ghost.remove();
-        ghostLabel.remove();
-      };
-      const update = () => {
-        const s = Math.min(startIndex, currentIndex);
-        const en = Math.max(startIndex, currentIndex);
-        ghost.setAttribute("x", String(s * ppd));
-        ghost.setAttribute("width", String((en - s + 1) * ppd));
-        ghostLabel.setAttribute("x", String((en + 1) * ppd + 4));
-        const from = addDays(range.start, s);
-        const to = addDays(range.start, en);
-        ghostLabel.textContent = en === s ? `${formatMonthDay(from)} \xB7 1\u65E5` : `${formatMonthDay(from)} \u301C ${formatMonthDay(to)} \xB7 ${en - s + 1}\u65E5`;
-      };
-      update();
-      const detach = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        document.removeEventListener("keydown", onKey);
-        document.body.removeClass("rg-plan-dragging");
-      };
-      const onMove = (ev) => {
-        currentIndex = dayIndexAt(ev);
-        update();
-      };
-      const onKey = (ev) => {
-        if (ev.key === "Escape") {
-          detach();
-          removeGhost();
-        }
-      };
-      const onUp = () => {
-        detach();
-        const s = Math.min(startIndex, currentIndex);
-        const en = Math.max(startIndex, currentIndex);
-        plan.onCreate({
-          groupId,
-          start: addDays(range.start, s),
-          end: addDays(range.start, en),
-          anchor: ghost.getBoundingClientRect(),
-          cancel: removeGhost
-        });
-      };
-      document.body.addClass("rg-plan-dragging");
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-      document.addEventListener("keydown", onKey);
+      startCreateDrag(e, block);
     });
   }
   const body = container.createDiv({ cls: "rg-body" });
@@ -2490,7 +2625,7 @@ function planTooltip(plan, groupName) {
     plan.name,
     `\u671F\u9593: ${formatDate(plan.start)} \u301C ${formatDate(plan.end)}`,
     plan.kind === "personal" ? `\u62C5\u5F53: ${groupName}` : `\u5168\u4F53\u4E88\u5B9A / ${groupName}`,
-    "\u30AF\u30EA\u30C3\u30AF\u3067\u7DE8\u96C6"
+    "\u30AF\u30EA\u30C3\u30AF\u3067\u7DE8\u96C6\u3001\u30C9\u30E9\u30C3\u30B0\u3067\u79FB\u52D5\u3001\u4E21\u7AEF\u3067\u671F\u9593\u5909\u66F4"
   ].join("\n");
 }
 
@@ -3285,6 +3420,26 @@ var GanttView = class extends import_obsidian8.ItemView {
       onDelete: () => this.deletePlan(planId)
     });
   }
+  /** バーのドラッグ結果(移動・期間変更・別グループへ)を保存する */
+  movePlan(req) {
+    const item = this.plugin.settings.planItems.find((i) => i.id === req.planId);
+    if (!item)
+      return;
+    const group = this.planGroupById(req.groupId);
+    const groupChanged = !!group && group.id !== item.groupId;
+    const oldStart = parsePlanDate(item.start);
+    const oldEnd = parsePlanDate(item.end);
+    const durationChanged = !oldStart || !oldEnd || diffDays(oldStart, oldEnd) !== diffDays(req.start, req.end);
+    const md = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+    const span = diffDays(req.start, req.end) === 0 ? md(req.start) : `${md(req.start)} \u301C ${md(req.end)}`;
+    const message = groupChanged ? `\u300C${item.name}\u300D\u3092\u300C${group.name}\u300D\u306E ${span} \u306B\u79FB\u52D5\u3057\u307E\u3057\u305F` : durationChanged ? `\u300C${item.name}\u300D\u306E\u671F\u9593\u3092 ${span} \u306B\u5909\u66F4\u3057\u307E\u3057\u305F` : `\u300C${item.name}\u300D\u3092 ${span} \u306B\u79FB\u52D5\u3057\u307E\u3057\u305F`;
+    this.mutatePlans(message, () => {
+      item.start = formatDate(req.start);
+      item.end = formatDate(req.end);
+      if (group)
+        item.groupId = group.id;
+    });
+  }
   deletePlan(planId) {
     const item = this.plugin.settings.planItems.find((i) => i.id === planId);
     if (!item)
@@ -3359,6 +3514,7 @@ var GanttView = class extends import_obsidian8.ItemView {
     return {
       onCreate: (req) => this.openPlanCreator(req),
       onOpen: (planId, anchor) => this.openPlanEditor(planId, anchor),
+      onMove: (req) => this.movePlan(req),
       onGroupOpen: (groupId, anchor) => this.openGroupEditor(groupId, anchor),
       onContextMenu: (e, target) => {
         const menu = new import_obsidian8.Menu();
