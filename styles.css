@@ -486,8 +486,9 @@
 	pointer-events: none;
 }
 
+/* 予定のバー: クリックで編集、ドラッグで移動、両端のハンドルで期間変更 */
 .rg-plan-item.is-editable {
-	cursor: pointer;
+	cursor: grab;
 }
 
 .rg-plan-item.is-editable:hover .rg-plan-bar,
@@ -496,7 +497,20 @@
 	stroke-width: 1.5;
 }
 
-/* ドラッグ中の作成範囲 */
+.rg-plan-item.is-dragging {
+	opacity: 0.35;
+}
+
+.rg-plan-handle {
+	fill: transparent;
+	cursor: ew-resize;
+}
+
+.rg-plan-item.is-editable:hover .rg-plan-handle {
+	fill: rgba(255, 255, 255, 0.45);
+}
+
+/* ドラッグ中の仮表示(作成範囲・移動先) */
 .rg-plan-ghost {
 	fill: var(--interactive-accent);
 	opacity: 0.4;
@@ -511,6 +525,16 @@
 
 body.rg-plan-dragging {
 	cursor: crosshair;
+	user-select: none;
+}
+
+body.rg-plan-moving {
+	cursor: grabbing;
+	user-select: none;
+}
+
+body.rg-plan-resizing {
+	cursor: ew-resize;
 	user-select: none;
 }
 
