@@ -1945,7 +1945,7 @@ function renderGantt(container, model, plans, groups, scale, range, opts) {
   for (const kind of ["team", "personal"]) {
     for (const group of groups.filter((g) => g.kind === kind)) {
       const list = datedPlans.filter((p) => p.groupId === group.id);
-      const pack = packLanes(list);
+      const pack = kind === "personal" ? { lane: new Map(list.map((p) => [p.id, 0])), count: list.length > 0 ? 1 : 0 } : packLanes(list);
       const lanes = Math.max(1, pack.count);
       blocks.push({
         group,

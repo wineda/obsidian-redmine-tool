@@ -179,8 +179,9 @@ export function renderGantt(
 	};
 
 	/**
-	 * 予定帯はグループごとに1行(同じグループ内で期間が重なるときだけサブレーンを増やす)。
-	 * 全体予定のグループを上、個人予定(担当者)のグループを下に積む
+	 * 予定帯はグループごとに1行。全体予定は同じグループ内で期間が重なるときだけサブレーンを増やし、
+	 * 個人予定(担当者)は重なっても常に1行に収める(レーン分割しない)。
+	 * 全体予定のグループを上、個人予定のグループを下に積む
 	 */
 	interface PlanBlock {
 		group: PlanGroupRow;
@@ -196,7 +197,10 @@ export function renderGantt(
 	for (const kind of ["team", "personal"] as const) {
 		for (const group of groups.filter((g) => g.kind === kind)) {
 			const list = datedPlans.filter((p) => p.groupId === group.id);
-			const pack = packLanes(list);
+			const pack =
+				kind === "personal"
+					? { lane: new Map(list.map((p) => [p.id, 0])), count: list.length > 0 ? 1 : 0 }
+					: packLanes(list);
 			const lanes = Math.max(1, pack.count);
 			blocks.push({
 				group,
